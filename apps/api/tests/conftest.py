@@ -1,9 +1,11 @@
 import os
+import uuid
 from pathlib import Path
 from typing import Annotated
 
-os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
+os.environ["DATABASE_URL"] = f"sqlite+pysqlite:////tmp/video-maker-test-{uuid.uuid4().hex}.db"
 os.environ["STORAGE_ROOT"] = "./test-storage"
+os.environ["OUTBOX_POLL_INTERVAL_SECONDS"] = "0"
 
 import pytest
 from fastapi import Header

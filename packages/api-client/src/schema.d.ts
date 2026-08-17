@@ -128,6 +128,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Quote Generation */
+        post: operations["quote_generation_v1_quotes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wallet */
+        get: operations["get_wallet_v1_wallet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet/test-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue Test Seconds */
+        post: operations["issue_test_seconds_v1_wallet_test_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Batch */
+        post: operations["create_batch_v1_batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Batch */
+        get: operations["get_batch_v1_batches__batch_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations": {
         parameters: {
             query?: never;
@@ -196,6 +281,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Get Job */
+        get: operations["admin_get_job_v1_admin_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/jobs/{job_id}/force-release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Force Release */
+        post: operations["admin_force_release_v1_admin_jobs__job_id__force_release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/jobs/{job_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admin Retry Job */
+        post: operations["admin_retry_job_v1_admin_jobs__job_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin Reconciliation */
+        get: operations["admin_reconciliation_v1_admin_reconciliation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/outputs/{output_id}/content": {
         parameters: {
             query?: never;
@@ -217,6 +370,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AdminAction */
+        AdminAction: {
+            /** Reason */
+            reason: string;
+        };
         /** AssetOut */
         AssetOut: {
             /**
@@ -258,7 +416,66 @@ export interface components {
             status: string;
             /** Provider Job Id */
             provider_job_id: string | null;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Failure Message */
+            failure_message: string | null;
         };
+        /** BatchCreate */
+        BatchCreate: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Quote Ids */
+            quote_ids: string[];
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Mock Mode
+             * @default success
+             * @enum {string}
+             */
+            mock_mode: "success" | "delayed" | "failure" | "timeout" | "flaky" | "submit_unknown" | "duplicate" | "corrupt";
+        };
+        /** BatchOut */
+        BatchOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Ledger Unit */
+            ledger_unit: string;
+            /** Reserved Ms */
+            reserved_ms: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            status: components["schemas"]["BatchStatus"];
+            /** Jobs */
+            jobs?: components["schemas"]["JobOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * BatchStatus
+         * @enum {string}
+         */
+        BatchStatus: "RESERVED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELLED";
         /** Body_upload_asset_v1_uploads_post */
         Body_upload_asset_v1_uploads_post: {
             /**
@@ -288,11 +505,16 @@ export interface components {
              */
             shot_id: string;
             /**
+             * Quote Id
+             * Format: uuid
+             */
+            quote_id: string;
+            /**
              * Mock Mode
              * @default success
              * @enum {string}
              */
-            mock_mode: "success" | "delayed" | "failure" | "timeout" | "duplicate" | "corrupt";
+            mock_mode: "success" | "delayed" | "failure" | "timeout" | "flaky" | "submit_unknown" | "duplicate" | "corrupt";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -342,6 +564,20 @@ export interface components {
              * Format: uuid
              */
             shot_id: string;
+            /** Batch Id */
+            batch_id: string | null;
+            /** Quote Id */
+            quote_id: string | null;
+            /** Quote Snapshot */
+            quote_snapshot: {
+                [key: string]: unknown;
+            } | null;
+            /** Ledger Unit */
+            ledger_unit: string | null;
+            /** Reserved Ms */
+            reserved_ms: number | null;
+            /** Settlement Status */
+            settlement_status: string | null;
             status: components["schemas"]["JobStatus"];
             /** Mock Mode */
             mock_mode: string;
@@ -370,7 +606,7 @@ export interface components {
          * JobStatus
          * @enum {string}
          */
-        JobStatus: "CREATED" | "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED";
+        JobStatus: "CREATED" | "QUEUED" | "RUNNING" | "CANCEL_REQUESTED" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED";
         /** OutputOut */
         OutputOut: {
             /**
@@ -429,6 +665,98 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+        };
+        /** QuoteCreate */
+        QuoteCreate: {
+            /**
+             * Shot Id
+             * Format: uuid
+             */
+            shot_id: string;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "FAST" | "STUDIO" | "CINEMA";
+            /**
+             * Resolution
+             * @default 720p
+             * @enum {string}
+             */
+            resolution: "720p" | "1080p";
+            /**
+             * Variant Count
+             * @default 1
+             */
+            variant_count: number;
+        };
+        /** QuoteOut */
+        QuoteOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Shot Id
+             * Format: uuid
+             */
+            shot_id: string;
+            /**
+             * Price Version Id
+             * Format: uuid
+             */
+            price_version_id: string;
+            /** Tier Code */
+            tier_code: string;
+            /** Ledger Unit */
+            ledger_unit: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Variant Count */
+            variant_count: number;
+            /** Resolution */
+            resolution: string;
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Reserved Ms */
+            reserved_ms: number;
+            /** Status */
+            status: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Used At */
+            used_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** ReconciliationOut */
+        ReconciliationOut: {
+            /** Ok */
+            ok: boolean;
+            /** Unbalanced Transactions */
+            unbalanced_transactions: {
+                [key: string]: unknown;
+            }[];
+            /** Projection Mismatches */
+            projection_mismatches: {
+                [key: string]: unknown;
+            }[];
+            /** Negative User Balances */
+            negative_user_balances: {
+                [key: string]: unknown;
+            }[];
         };
         /** ShotCreate */
         ShotCreate: {
@@ -493,6 +821,20 @@ export interface components {
             /** Aspect Ratio */
             aspect_ratio?: ("16:9" | "9:16") | null;
         };
+        /** TestGrantCreate */
+        TestGrantCreate: {
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "FAST" | "STUDIO" | "CINEMA";
+            /** Amount Ms */
+            amount_ms: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reason */
+            reason: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -501,6 +843,15 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WalletOut */
+        WalletOut: {
+            /** Balances */
+            balances: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
         };
     };
     responses: never;
@@ -902,6 +1253,156 @@ export interface operations {
             };
         };
     };
+    quote_generation_v1_quotes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_wallet_v1_wallet_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletOut"];
+                };
+            };
+        };
+    };
+    issue_test_seconds_v1_wallet_test_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestGrantCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_batch_v1_batches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_batch_v1_batches__batch_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     generate_v1_generations_post: {
         parameters: {
             query?: never;
@@ -1013,6 +1514,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobList"];
+                };
+            };
+        };
+    };
+    admin_get_job_v1_admin_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-admin-token"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_force_release_v1_admin_jobs__job_id__force_release_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-admin-token"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_retry_job_v1_admin_jobs__job_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-admin-token"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminAction"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admin_reconciliation_v1_admin_reconciliation_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconciliationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

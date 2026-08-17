@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi.testclient import TestClient
 
 from app.provider import MockVideoProvider
@@ -19,7 +21,25 @@ def create_shot(client: TestClient) -> dict:
 
 
 def generate(client: TestClient, shot_id: str, mode: str) -> dict:
-    response = client.post("/v1/generations", json={"shot_id": shot_id, "mock_mode": mode})
+    grant = client.post(
+        "/v1/wallet/test-grants",
+        json={
+            "tier": "FAST",
+            "amount_ms": 10_000,
+            "idempotency_key": f"test-grant:{uuid.uuid4()}",
+            "reason": "mock job test",
+        },
+    )
+    assert grant.status_code == 201
+    quote = client.post(
+        "/v1/quotes",
+        json={"shot_id": shot_id, "tier": "FAST", "resolution": "720p", "variant_count": 1},
+    )
+    assert quote.status_code == 201
+    response = client.post(
+        "/v1/generations",
+        json={"shot_id": shot_id, "quote_id": quote.json()["id"], "mock_mode": mode},
+    )
     assert response.status_code == 202
     job = response.json()
     refreshed = client.get(f"/v1/generations/{job['id']}")
@@ -39,9 +59,9 @@ def test_mock_success_produces_playable_mp4(client: TestClient) -> None:
 def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) -> None:
     shot = create_shot(client)
     failed = generate(client, shot["id"], "failure")
-    assert (failed["status"], failed["error_code"]) == ("FAILED_FINAL", "MOCK_PROVIDER_FAILED")
+    assert (failed["status"], failed["error_code"]) == ("FAILED_FINAL", "WORKFLOW_FAILED")
     timed_out = generate(client, shot["id"], "timeout")
-    assert (timed_out["status"], timed_out["error_code"]) == ("FAILED_FINAL", "MOCK_TIMEOUT")
+    assert (timed_out["status"], timed_out["error_code"]) == ("FAILED_FINAL", "NETWORK_TIMEOUT")
     corrupt = generate(client, shot["id"], "corrupt")
     assert (corrupt["status"], corrupt["error_code"]) == ("FAILED_FINAL", "OUTPUT_INVALID_MP4")
     assert corrupt["outputs"][0]["is_valid"] is False

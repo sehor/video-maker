@@ -9,12 +9,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
-from app.models import Attempt, AttemptStatus, Job, JobEvent, JobStatus, Output
+from app.ledger import finish_reservation
+from app.models import (
+    Attempt,
+    AttemptStatus,
+    Batch,
+    BatchStatus,
+    Job,
+    JobEvent,
+    JobStatus,
+    Output,
+)
 from app.storage import LocalObjectStorage
 
 
 class VideoProvider(Protocol):
-    async def submit(self, job_id: uuid.UUID) -> None: ...
+    async def submit(self, job_id: uuid.UUID, attempt_id: uuid.UUID) -> None: ...
 
     async def poll(self, provider_job_id: str) -> str: ...
 
@@ -22,13 +32,51 @@ class VideoProvider(Protocol):
 
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
-    JobStatus.CREATED: {JobStatus.QUEUED, JobStatus.CANCELLED},
-    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED},
-    JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED_FINAL, JobStatus.CANCELLED},
+    JobStatus.CREATED: {JobStatus.QUEUED, JobStatus.CANCELLED, JobStatus.FAILED_FINAL},
+    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED, JobStatus.FAILED_FINAL},
+    JobStatus.RUNNING: {
+        JobStatus.QUEUED,
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED_FINAL,
+        JobStatus.CANCEL_REQUESTED,
+    },
+    JobStatus.CANCEL_REQUESTED: {
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED_FINAL,
+        JobStatus.CANCELLED,
+    },
     JobStatus.SUCCEEDED: set(),
-    JobStatus.FAILED_FINAL: set(),
+    JobStatus.FAILED_FINAL: {JobStatus.QUEUED},
     JobStatus.CANCELLED: set(),
 }
+
+RETRYABLE_FAILURE_CODES = {
+    "NETWORK_TIMEOUT",
+    "PROVIDER_5XX",
+    "PROVIDER_CAPACITY",
+    "QUEUE_TIMEOUT",
+    "WORKER_INTERRUPTED",
+}
+
+
+def refresh_batch_status(db: Session, batch_id: uuid.UUID | None) -> None:
+    if batch_id is None:
+        return
+    batch = db.get(Batch, batch_id)
+    if batch is None:
+        return
+    statuses = set(db.scalars(select(Job.status).where(Job.batch_id == batch_id)))
+    terminal = {JobStatus.SUCCEEDED, JobStatus.FAILED_FINAL, JobStatus.CANCELLED}
+    if not statuses.issubset(terminal):
+        batch.status = BatchStatus.RUNNING
+    elif statuses == {JobStatus.SUCCEEDED}:
+        batch.status = BatchStatus.SUCCEEDED
+    elif JobStatus.SUCCEEDED in statuses:
+        batch.status = BatchStatus.PARTIAL_SUCCESS
+    elif statuses == {JobStatus.CANCELLED}:
+        batch.status = BatchStatus.CANCELLED
+    else:
+        batch.status = BatchStatus.FAILED
 
 
 def transition(
@@ -60,71 +108,164 @@ class MockVideoProvider:
     def __init__(self, storage: LocalObjectStorage) -> None:
         self.storage = storage
 
-    async def submit(self, job_id: uuid.UUID) -> None:
-        provider_id = f"mock-{uuid.uuid4().hex}"
+    async def submit(self, job_id: uuid.UUID, attempt_id: uuid.UUID) -> None:
+        provider_id: str
         with SessionLocal() as db:
             job = db.get(Job, job_id)
-            if job is None or job.status == JobStatus.CANCELLED:
+            attempt = db.get(Attempt, attempt_id)
+            if job is None or attempt is None or attempt.job_id != job_id:
                 return
-            attempt = db.scalar(select(Attempt).where(Attempt.job_id == job_id))
-            if attempt is None:
+            if job.status == JobStatus.QUEUED and attempt.status == AttemptStatus.CREATED:
+                provider_id = f"mock-{uuid.uuid4().hex}"
+                attempt.status = AttemptStatus.SUBMITTING
+                attempt.provider_job_id = provider_id
+                transition(
+                    db, job, JobStatus.RUNNING, "provider.started", f"{provider_id}:running"
+                )
+                attempt.status = AttemptStatus.RUNNING
+                db.commit()
+            elif (
+                job.status in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
+                and attempt.status == AttemptStatus.RUNNING
+                and attempt.provider_job_id is not None
+            ):
+                provider_id = attempt.provider_job_id
+            else:
                 return
-            attempt.provider_job_id = provider_id
-            transition(db, job, JobStatus.RUNNING, "provider.started", f"{provider_id}:running")
-            attempt.status = AttemptStatus.RUNNING
-            db.commit()
+            if job.mock_mode == "submit_unknown" and attempt.failure_code is None:
+                attempt.failure_code = "SUBMIT_CONNECTION_LOST"
+                attempt.failure_message = "Provider 已接收，但提交响应连接中断"
+                db.commit()
+                raise ConnectionError("connection lost after provider accepted submit")
 
         if job.mock_mode == "delayed":
             await asyncio.sleep(1)
-        elif job.mock_mode == "timeout":
+        elif job.mock_mode == "timeout" or (job.mock_mode == "flaky" and attempt.number == 1):
             await asyncio.sleep(0.1)
-            self._fail(job_id, provider_id, "MOCK_TIMEOUT", "Mock Provider 超时")
+            self._fail(
+                job_id,
+                attempt_id,
+                provider_id,
+                "NETWORK_TIMEOUT",
+                "Mock Provider 超时",
+            )
             return
         elif job.mock_mode == "failure":
-            self._fail(job_id, provider_id, "MOCK_PROVIDER_FAILED", "Mock Provider 返回失败")
+            self._fail(
+                job_id,
+                attempt_id,
+                provider_id,
+                "WORKFLOW_FAILED",
+                "Mock Provider 返回失败",
+            )
             return
 
         if self._is_cancelled(job_id):
             return
         if job.mock_mode == "corrupt":
-            self._finish_corrupt(job_id, provider_id)
+            self._finish_corrupt(job_id, attempt_id, provider_id)
             return
 
         content = self._create_mp4()
-        self._finish_success(job_id, provider_id, content)
+        self._finish_success(job_id, attempt_id, provider_id, content)
         if job.mock_mode == "duplicate":
-            self._finish_success(job_id, provider_id, content)
+            self._finish_success(job_id, attempt_id, provider_id, content)
 
     async def poll(self, provider_job_id: str) -> str:
         return "completed"
 
     async def cancel(self, provider_job_id: str) -> None:
-        return None
+        with SessionLocal() as db:
+            attempt = db.scalar(
+                select(Attempt).where(Attempt.provider_job_id == provider_job_id).with_for_update()
+            )
+            if attempt is None:
+                return
+            job = db.scalar(select(Job).where(Job.id == attempt.job_id).with_for_update())
+            if job is None or job.status != JobStatus.CANCEL_REQUESTED:
+                return
+            attempt.status = AttemptStatus.CANCELLED
+            if transition(
+                db,
+                job,
+                JobStatus.CANCELLED,
+                "provider.cancelled",
+                f"{provider_job_id}:cancelled",
+            ):
+                job.error_code = "USER_CANCELLED"
+                job.error_message = "用户取消任务"
+                finish_reservation(db, job, settle=False)
+                refresh_batch_status(db, job.batch_id)
+                db.commit()
 
     def _is_cancelled(self, job_id: uuid.UUID) -> bool:
         with SessionLocal() as db:
             job = db.get(Job, job_id)
             return job is None or job.status == JobStatus.CANCELLED
 
-    def _fail(self, job_id: uuid.UUID, provider_id: str, code: str, message: str) -> None:
+    def _fail(
+        self,
+        job_id: uuid.UUID,
+        attempt_id: uuid.UUID,
+        provider_id: str,
+        code: str,
+        message: str,
+    ) -> None:
         with SessionLocal() as db:
-            job = db.get(Job, job_id)
-            attempt = db.scalar(select(Attempt).where(Attempt.job_id == job_id))
-            if job is None or attempt is None or job.status == JobStatus.CANCELLED:
+            job = db.scalar(select(Job).where(Job.id == job_id).with_for_update())
+            attempt = db.get(Attempt, attempt_id)
+            if (
+                job is None
+                or attempt is None
+                or attempt.provider_job_id != provider_id
+                or job.status not in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
+            ):
                 return
+            attempt.failure_code = code
+            attempt.failure_message = message
+            if code in RETRYABLE_FAILURE_CODES and attempt.number < job.max_attempts:
+                attempt.status = AttemptStatus.FAILED_RETRYABLE
+                next_attempt = Attempt(
+                    job_id=job.id,
+                    number=attempt.number + 1,
+                    provider="mock",
+                    status=AttemptStatus.CREATED,
+                )
+                db.add(next_attempt)
+                db.flush()
+                if transition(
+                    db,
+                    job,
+                    JobStatus.QUEUED,
+                    "attempt.retry_scheduled",
+                    f"attempt:{attempt.id}:retry:v1",
+                ):
+                    from app.outbox import enqueue_generation
+
+                    enqueue_generation(db, job.id, next_attempt.id)
+                db.commit()
+                return
+            attempt.status = (
+                AttemptStatus.TIMED_OUT
+                if code in {"NETWORK_TIMEOUT", "QUEUE_TIMEOUT"}
+                else AttemptStatus.FAILED_FINAL
+            )
             if transition(
                 db, job, JobStatus.FAILED_FINAL, "provider.failed", f"{provider_id}:failed"
             ):
                 job.error_code = code
                 job.error_message = message
-                attempt.status = AttemptStatus.FAILED
+                finish_reservation(db, job, settle=False)
+                refresh_batch_status(db, job.batch_id)
                 db.commit()
 
-    def _finish_corrupt(self, job_id: uuid.UUID, provider_id: str) -> None:
+    def _finish_corrupt(
+        self, job_id: uuid.UUID, attempt_id: uuid.UUID, provider_id: str
+    ) -> None:
         stored = self.storage.write_bytes("outputs", b"not-an-mp4", "video/mp4")
         with SessionLocal() as db:
             job = db.get(Job, job_id)
-            attempt = db.scalar(select(Attempt).where(Attempt.job_id == job_id))
+            attempt = db.get(Attempt, attempt_id)
             if job is None or attempt is None or job.status == JobStatus.CANCELLED:
                 self.storage.delete(stored.key)
                 return
@@ -142,14 +283,24 @@ class MockVideoProvider:
             transition(db, job, JobStatus.FAILED_FINAL, "output.invalid", f"{provider_id}:corrupt")
             job.error_code = "OUTPUT_INVALID_MP4"
             job.error_message = "Provider 输出不是有效 MP4"
-            attempt.status = AttemptStatus.FAILED
+            attempt.status = AttemptStatus.FAILED_FINAL
+            attempt.failure_code = "OUTPUT_INVALID_MEDIA"
+            attempt.failure_message = "Provider 输出不是有效 MP4"
+            finish_reservation(db, job, settle=False)
+            refresh_batch_status(db, job.batch_id)
             db.commit()
 
-    def _finish_success(self, job_id: uuid.UUID, provider_id: str, content: bytes) -> None:
+    def _finish_success(
+        self, job_id: uuid.UUID, attempt_id: uuid.UUID, provider_id: str, content: bytes
+    ) -> None:
         with SessionLocal() as db:
             job = db.get(Job, job_id)
-            attempt = db.scalar(select(Attempt).where(Attempt.job_id == job_id))
-            if job is None or attempt is None or job.status != JobStatus.RUNNING:
+            attempt = db.get(Attempt, attempt_id)
+            if (
+                job is None
+                or attempt is None
+                or job.status not in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
+            ):
                 return
             dedup_key = f"{provider_id}:completed"
             if db.scalar(select(JobEvent.id).where(JobEvent.dedup_key == dedup_key)):
@@ -168,6 +319,10 @@ class MockVideoProvider:
             )
             transition(db, job, JobStatus.SUCCEEDED, "provider.completed", dedup_key)
             attempt.status = AttemptStatus.SUCCEEDED
+            attempt.failure_code = None
+            attempt.failure_message = None
+            finish_reservation(db, job, settle=True)
+            refresh_batch_status(db, job.batch_id)
             db.commit()
 
     @staticmethod
