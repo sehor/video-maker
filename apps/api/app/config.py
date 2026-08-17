@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     auth_audience: str = "video-factory-api"
     storage_root: Path = Path("./data/storage")
     max_upload_bytes: int = 50 * 1024 * 1024
+    outbox_poll_interval_seconds: float = 0.5
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")

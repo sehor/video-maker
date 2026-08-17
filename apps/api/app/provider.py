@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.ledger import finish_reservation
 from app.models import Attempt, AttemptStatus, Job, JobEvent, JobStatus, Output
 from app.storage import LocalObjectStorage
 
@@ -64,10 +65,10 @@ class MockVideoProvider:
         provider_id = f"mock-{uuid.uuid4().hex}"
         with SessionLocal() as db:
             job = db.get(Job, job_id)
-            if job is None or job.status == JobStatus.CANCELLED:
+            if job is None or job.status != JobStatus.QUEUED:
                 return
             attempt = db.scalar(select(Attempt).where(Attempt.job_id == job_id))
-            if attempt is None:
+            if attempt is None or attempt.provider_job_id is not None:
                 return
             attempt.provider_job_id = provider_id
             transition(db, job, JobStatus.RUNNING, "provider.started", f"{provider_id}:running")
@@ -118,6 +119,7 @@ class MockVideoProvider:
                 job.error_code = code
                 job.error_message = message
                 attempt.status = AttemptStatus.FAILED
+                finish_reservation(db, job, settle=False)
                 db.commit()
 
     def _finish_corrupt(self, job_id: uuid.UUID, provider_id: str) -> None:
@@ -143,6 +145,7 @@ class MockVideoProvider:
             job.error_code = "OUTPUT_INVALID_MP4"
             job.error_message = "Provider 输出不是有效 MP4"
             attempt.status = AttemptStatus.FAILED
+            finish_reservation(db, job, settle=False)
             db.commit()
 
     def _finish_success(self, job_id: uuid.UUID, provider_id: str, content: bytes) -> None:
@@ -168,6 +171,7 @@ class MockVideoProvider:
             )
             transition(db, job, JobStatus.SUCCEEDED, "provider.completed", dedup_key)
             attempt.status = AttemptStatus.SUCCEEDED
+            finish_reservation(db, job, settle=True)
             db.commit()
 
     @staticmethod

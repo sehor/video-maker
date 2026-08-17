@@ -86,6 +86,7 @@ class AssetOut(OrmModel):
 
 class GenerationCreate(BaseModel):
     shot_id: uuid.UUID
+    quote_id: uuid.UUID
     mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
         "success"
     )
@@ -119,6 +120,11 @@ class JobOut(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
     shot_id: uuid.UUID
+    quote_id: uuid.UUID | None
+    quote_snapshot: dict | None
+    ledger_unit: str | None
+    reserved_ms: int | None
+    settlement_status: str | None
     status: JobStatus
     mock_mode: str
     error_code: str | None
@@ -133,3 +139,39 @@ class JobOut(OrmModel):
 class JobList(BaseModel):
     items: list[JobOut]
     next_cursor: str | None = None
+
+
+class QuoteCreate(BaseModel):
+    shot_id: uuid.UUID
+    tier: Literal["FAST", "STUDIO", "CINEMA"]
+    resolution: Literal["720p", "1080p"] = "720p"
+    variant_count: int = Field(default=1, ge=1, le=4)
+
+
+class QuoteOut(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    shot_id: uuid.UUID
+    price_version_id: uuid.UUID
+    tier_code: str
+    ledger_unit: str
+    duration_ms: int
+    variant_count: int
+    resolution: str
+    aspect_ratio: str
+    reserved_ms: int
+    status: str
+    expires_at: datetime
+    used_at: datetime | None
+    created_at: datetime
+
+
+class TestGrantCreate(BaseModel):
+    tier: Literal["FAST", "STUDIO", "CINEMA"]
+    amount_ms: int = Field(gt=0, le=86_400_000)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class WalletOut(BaseModel):
+    balances: dict[str, dict[str, int]]

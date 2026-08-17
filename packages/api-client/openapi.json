@@ -580,6 +580,115 @@
         }
       }
     },
+    "/v1/quotes": {
+      "post": {
+        "summary": "Quote Generation",
+        "operationId": "quote_generation_v1_quotes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/wallet": {
+      "get": {
+        "summary": "Get Wallet",
+        "operationId": "get_wallet_v1_wallet_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/wallet/test-grants": {
+      "post": {
+        "summary": "Issue Test Seconds",
+        "operationId": "issue_test_seconds_v1_wallet_test_grants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestGrantCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/v1/generations": {
       "post": {
         "summary": "Generate",
@@ -910,6 +1019,11 @@
             "format": "uuid",
             "title": "Shot Id"
           },
+          "quote_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Quote Id"
+          },
           "mock_mode": {
             "type": "string",
             "enum": [
@@ -926,7 +1040,8 @@
         },
         "type": "object",
         "required": [
-          "shot_id"
+          "shot_id",
+          "quote_id"
         ],
         "title": "GenerationCreate"
       },
@@ -1029,6 +1144,63 @@
             "format": "uuid",
             "title": "Shot Id"
           },
+          "quote_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Id"
+          },
+          "quote_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Snapshot"
+          },
+          "ledger_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ledger Unit"
+          },
+          "reserved_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reserved Ms"
+          },
+          "settlement_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Status"
+          },
           "status": {
             "$ref": "#/components/schemas/JobStatus"
           },
@@ -1095,6 +1267,11 @@
           "id",
           "project_id",
           "shot_id",
+          "quote_id",
+          "quote_snapshot",
+          "ledger_unit",
+          "reserved_ms",
+          "settlement_status",
           "status",
           "mock_mode",
           "error_code",
@@ -1278,6 +1455,143 @@
         "type": "object",
         "title": "ProjectUpdate"
       },
+      "QuoteCreate": {
+        "properties": {
+          "shot_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Shot Id"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "FAST",
+              "STUDIO",
+              "CINEMA"
+            ],
+            "title": "Tier"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "720p",
+              "1080p"
+            ],
+            "title": "Resolution",
+            "default": "720p"
+          },
+          "variant_count": {
+            "type": "integer",
+            "maximum": 4.0,
+            "minimum": 1.0,
+            "title": "Variant Count",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "shot_id",
+          "tier"
+        ],
+        "title": "QuoteCreate"
+      },
+      "QuoteOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "shot_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Shot Id"
+          },
+          "price_version_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Price Version Id"
+          },
+          "tier_code": {
+            "type": "string",
+            "title": "Tier Code"
+          },
+          "ledger_unit": {
+            "type": "string",
+            "title": "Ledger Unit"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms"
+          },
+          "variant_count": {
+            "type": "integer",
+            "title": "Variant Count"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "title": "Aspect Ratio"
+          },
+          "reserved_ms": {
+            "type": "integer",
+            "title": "Reserved Ms"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "shot_id",
+          "price_version_id",
+          "tier_code",
+          "ledger_unit",
+          "duration_ms",
+          "variant_count",
+          "resolution",
+          "aspect_ratio",
+          "reserved_ms",
+          "status",
+          "expires_at",
+          "used_at",
+          "created_at"
+        ],
+        "title": "QuoteOut"
+      },
       "ShotCreate": {
         "properties": {
           "title": {
@@ -1455,6 +1769,45 @@
         "type": "object",
         "title": "ShotUpdate"
       },
+      "TestGrantCreate": {
+        "properties": {
+          "tier": {
+            "type": "string",
+            "enum": [
+              "FAST",
+              "STUDIO",
+              "CINEMA"
+            ],
+            "title": "Tier"
+          },
+          "amount_ms": {
+            "type": "integer",
+            "maximum": 86400000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Ms"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tier",
+          "amount_ms",
+          "idempotency_key",
+          "reason"
+        ],
+        "title": "TestGrantCreate"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -1487,6 +1840,25 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WalletOut": {
+        "properties": {
+          "balances": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Balances"
+          }
+        },
+        "type": "object",
+        "required": [
+          "balances"
+        ],
+        "title": "WalletOut"
       }
     },
     "securitySchemes": {

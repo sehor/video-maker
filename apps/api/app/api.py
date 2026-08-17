@@ -12,6 +12,13 @@ from app.auth import CurrentUser
 from app.config import get_settings
 from app.db import get_db
 from app.errors import ApiError, not_found
+from app.ledger import (
+    create_quote,
+    finish_reservation,
+    grant_test_seconds,
+    reserve_quote,
+    wallet_balances,
+)
 from app.models import (
     Asset,
     Attempt,
@@ -20,9 +27,11 @@ from app.models import (
     JobStatus,
     Output,
     Project,
+    SettlementStatus,
     Shot,
 )
-from app.provider import MockVideoProvider, transition
+from app.outbox import drain_local_tasks, enqueue_generation
+from app.provider import transition
 from app.schemas import (
     AssetOut,
     GenerationCreate,
@@ -32,10 +41,14 @@ from app.schemas import (
     ProjectList,
     ProjectOut,
     ProjectUpdate,
+    QuoteCreate,
+    QuoteOut,
     ShotCreate,
     ShotList,
     ShotOut,
     ShotUpdate,
+    TestGrantCreate,
+    WalletOut,
 )
 from app.storage import LocalObjectStorage
 
@@ -243,6 +256,43 @@ def load_job(db: Session, job_id: uuid.UUID, owner_id: uuid.UUID) -> Job:
     return job
 
 
+@router.post("/quotes", response_model=QuoteOut, status_code=201)
+def quote_generation(payload: QuoteCreate, user: CurrentUser, db: Db):
+    shot = db.scalar(
+        select(Shot).join(Project).where(Shot.id == payload.shot_id, Project.owner_id == user.id)
+    )
+    if shot is None:
+        raise not_found("shot")
+    return create_quote(
+        db,
+        user,
+        shot,
+        tier_code=payload.tier,
+        resolution=payload.resolution,
+        variant_count=payload.variant_count,
+    )
+
+
+@router.get("/wallet", response_model=WalletOut)
+def get_wallet(user: CurrentUser, db: Db) -> WalletOut:
+    return WalletOut(balances=wallet_balances(db, user.id))
+
+
+@router.post("/wallet/test-grants", response_model=WalletOut, status_code=201)
+def issue_test_seconds(payload: TestGrantCreate, user: CurrentUser, db: Db) -> WalletOut:
+    if get_settings().environment == "production":
+        raise not_found("endpoint")
+    grant_test_seconds(
+        db,
+        user,
+        payload.tier,
+        payload.amount_ms,
+        payload.idempotency_key,
+        payload.reason,
+    )
+    return WalletOut(balances=wallet_balances(db, user.id))
+
+
 @router.post("/generations", response_model=JobOut, status_code=202)
 def generate(
     payload: GenerationCreate,
@@ -255,20 +305,40 @@ def generate(
     )
     if shot is None:
         raise not_found("shot")
+    job_id = uuid.uuid4()
+    quote = reserve_quote(db, payload.quote_id, user, shot, job_id)
+    snapshot = {
+        "quote_id": str(quote.id),
+        "price_version_id": str(quote.price_version_id),
+        "tier": quote.tier_code,
+        "ledger_unit": quote.ledger_unit,
+        "duration_ms": quote.duration_ms,
+        "variant_count": quote.variant_count,
+        "resolution": quote.resolution,
+        "aspect_ratio": quote.aspect_ratio,
+        "reserved_ms": quote.reserved_ms,
+    }
     job = Job(
+        id=job_id,
         owner_id=user.id,
         project_id=shot.project_id,
         shot_id=shot.id,
         status=JobStatus.CREATED,
         mock_mode=payload.mock_mode,
+        quote_id=quote.id,
+        quote_snapshot=snapshot,
+        ledger_unit=quote.ledger_unit,
+        reserved_ms=quote.reserved_ms,
+        settlement_status=SettlementStatus.RESERVED,
     )
     db.add(job)
     db.flush()
     attempt = Attempt(job_id=job.id, number=1, provider="mock", status=AttemptStatus.CREATED)
     db.add(attempt)
     transition(db, job, JobStatus.QUEUED, "job.queued", f"{job.id}:queued")
+    enqueue_generation(db, job.id)
     db.commit()
-    background.add_task(MockVideoProvider(storage()).submit, job.id)
+    background.add_task(drain_local_tasks, storage())
     return load_job(db, job.id, user.id)
 
 
@@ -286,6 +356,7 @@ def cancel_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> Job:
         for attempt in job.attempts:
             if attempt.status in {AttemptStatus.CREATED, AttemptStatus.RUNNING}:
                 attempt.status = AttemptStatus.CANCELLED
+        finish_reservation(db, job, settle=False)
         db.commit()
     return load_job(db, job.id, user.id)
 

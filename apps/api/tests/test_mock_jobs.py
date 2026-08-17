@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi.testclient import TestClient
 
 from app.provider import MockVideoProvider
@@ -19,7 +21,25 @@ def create_shot(client: TestClient) -> dict:
 
 
 def generate(client: TestClient, shot_id: str, mode: str) -> dict:
-    response = client.post("/v1/generations", json={"shot_id": shot_id, "mock_mode": mode})
+    grant = client.post(
+        "/v1/wallet/test-grants",
+        json={
+            "tier": "FAST",
+            "amount_ms": 10_000,
+            "idempotency_key": f"test-grant:{uuid.uuid4()}",
+            "reason": "mock job test",
+        },
+    )
+    assert grant.status_code == 201
+    quote = client.post(
+        "/v1/quotes",
+        json={"shot_id": shot_id, "tier": "FAST", "resolution": "720p", "variant_count": 1},
+    )
+    assert quote.status_code == 201
+    response = client.post(
+        "/v1/generations",
+        json={"shot_id": shot_id, "quote_id": quote.json()["id"], "mock_mode": mode},
+    )
     assert response.status_code == 202
     job = response.json()
     refreshed = client.get(f"/v1/generations/{job['id']}")

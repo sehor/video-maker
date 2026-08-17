@@ -128,6 +128,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/quotes": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        get?: never;
+        put?: never;
+        /** Quote Generation */
+        post: operations["quote_generation_v1_quotes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        /** Get Wallet */
+        get: operations["get_wallet_v1_wallet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet/test-grants": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        get?: never;
+        put?: never;
+        /** Issue Test Seconds */
+        post: operations["issue_test_seconds_v1_wallet_test_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations": {
         parameters: {
             query?: never;
@@ -285,8 +321,13 @@ export interface components {
             /**
              * Shot Id
              * Format: uuid
-             */
+            */
             shot_id: string;
+            /**
+             * Quote Id
+             * Format: uuid
+             */
+            quote_id: string;
             /**
              * Mock Mode
              * @default success
@@ -340,8 +381,18 @@ export interface components {
             /**
              * Shot Id
              * Format: uuid
-             */
+            */
             shot_id: string;
+            /** Format: uuid */
+            quote_id: string | null;
+            /** Quote Snapshot */
+            quote_snapshot: { [key: string]: unknown } | null;
+            /** Ledger Unit */
+            ledger_unit: string | null;
+            /** Reserved Ms */
+            reserved_ms: number | null;
+            /** Settlement Status */
+            settlement_status: string | null;
             status: components["schemas"]["JobStatus"];
             /** Mock Mode */
             mock_mode: string;
@@ -430,6 +481,42 @@ export interface components {
             /** Description */
             description?: string | null;
         };
+        /** QuoteCreate */
+        QuoteCreate: {
+            /** Format: uuid */
+            shot_id: string;
+            /** @enum {string} */
+            tier: "FAST" | "STUDIO" | "CINEMA";
+            /** @default 720p */
+            resolution?: "720p" | "1080p";
+            /** @default 1 */
+            variant_count?: number;
+        };
+        /** QuoteOut */
+        QuoteOut: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            shot_id: string;
+            /** Format: uuid */
+            price_version_id: string;
+            tier_code: string;
+            ledger_unit: string;
+            duration_ms: number;
+            variant_count: number;
+            resolution: string;
+            aspect_ratio: string;
+            reserved_ms: number;
+            status: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            used_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
         /** ShotCreate */
         ShotCreate: {
             /** Title */
@@ -493,6 +580,13 @@ export interface components {
             /** Aspect Ratio */
             aspect_ratio?: ("16:9" | "9:16") | null;
         };
+        /** TestGrantCreate */
+        TestGrantCreate: {
+            tier: "FAST" | "STUDIO" | "CINEMA";
+            amount_ms: number;
+            idempotency_key: string;
+            reason: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -501,6 +595,14 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WalletOut */
+        WalletOut: {
+            balances: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
         };
     };
     responses: never;
@@ -899,6 +1001,48 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    quote_generation_v1_quotes_post: {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        requestBody: {
+            content: { "application/json": components["schemas"]["QuoteCreate"] };
+        };
+        responses: {
+            201: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["QuoteOut"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
+            };
+        };
+    };
+    get_wallet_v1_wallet_get: {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["WalletOut"] };
+            };
+        };
+    };
+    issue_test_seconds_v1_wallet_test_grants_post: {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        requestBody: {
+            content: { "application/json": components["schemas"]["TestGrantCreate"] };
+        };
+        responses: {
+            201: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["WalletOut"] };
+            };
+            422: {
+                headers: { [name: string]: unknown };
+                content: { "application/json": components["schemas"]["HTTPValidationError"] };
             };
         };
     };

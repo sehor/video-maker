@@ -1,6 +1,9 @@
+import asyncio
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI, Request
@@ -12,6 +15,8 @@ from fastapi.responses import JSONResponse
 from app.api import router
 from app.config import get_settings
 from app.errors import ApiError
+from app.outbox import dispatcher_loop
+from app.storage import LocalObjectStorage
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 structlog.configure(
@@ -25,10 +30,29 @@ structlog.configure(
 logger = structlog.get_logger()
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    task = None
+    if settings.outbox_poll_interval_seconds > 0:
+        task = asyncio.create_task(
+            dispatcher_loop(
+                LocalObjectStorage(settings.storage_root), settings.outbox_poll_interval_seconds
+            )
+        )
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     docs_url="/docs" if settings.environment != "production" else None,
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
