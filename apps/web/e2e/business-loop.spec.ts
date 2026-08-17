@@ -16,6 +16,6 @@ test('register, create project, create shot and run mock generation', async ({ p
   await page.getByLabel('提示词').fill('电影感的雨夜城市街道')
   await page.getByRole('button', { name: '创建镜头' }).click()
   await page.getByRole('button', { name: '开始生成' }).click()
-  await expect(page.getByText('SUCCEEDED')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('video')).toBeVisible()
 })
