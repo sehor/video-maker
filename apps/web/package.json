@@ -6,7 +6,7 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "nuxt prepare && vitest run",
     "test:e2e": "playwright test",
     "auth:migrate": "better-auth migrate --config server/utils/auth.ts --yes",
     "generate:client": "openapi-typescript ../../packages/api-client/openapi.json -o ../../packages/api-client/src/schema.d.ts"
