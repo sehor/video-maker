@@ -1,0 +1,21 @@
+{
+  "name": "@video-factory/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts",
+    "check": "openapi-typescript openapi.json -o src/schema.d.ts --check"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.9.1",
+    "typescript": "^5.9.2"
+  }
+}
