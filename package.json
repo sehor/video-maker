@@ -1,0 +1,11 @@
+{
+  "name": "video-factory",
+  "private": true,
+  "workspaces": ["apps/web", "packages/api-client"],
+  "scripts": {
+    "test": "npm run test --workspace apps/web",
+    "lint": "npm run lint --workspace apps/web",
+    "generate:client": "npm run generate --workspace packages/api-client"
+  },
+  "engines": { "node": ">=22" }
+}

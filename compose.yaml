@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-video_factory}
+      POSTGRES_USER: ${POSTGRES_USER:-video_factory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_factory_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-video_factory} -d ${POSTGRES_DB:-video_factory}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://web:3000/api/auth/jwks}
+      AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:3000}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
+      STORAGE_ROOT: /data/storage
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/app
+      - ./packages/api-client:/packages/api-client
+      - local-storage:/data/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      BETTER_AUTH_DATABASE_URL: ${BETTER_AUTH_DATABASE_URL:-postgresql://video_factory:video_factory_dev@postgres:5432/video_factory}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-development-only-secret-change-before-use}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
+      NUXT_PUBLIC_AUTH_BASE_URL: ${NUXT_PUBLIC_AUTH_BASE_URL:-http://localhost:3000}
+    command: sh -c "npm run auth:migrate && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/workspace/apps/web
+      - ./packages/api-client:/workspace/packages/api-client
+      - web-node-modules:/workspace/node_modules
+
+volumes:
+  postgres-data:
+  local-storage:
+  web-node-modules:

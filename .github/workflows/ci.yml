@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build services
+        run: docker compose build
+      - name: Install E2E dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: API tests
+        run: docker compose run --rm api pytest -q
+      - name: API lint
+        run: docker compose run --rm api ruff check app tests
+      - name: Web unit tests
+        run: docker compose run --rm web npm run test
+      - name: Web lint and build
+        run: |
+          docker compose run --rm web npm run lint
+          docker compose run --rm web npm run build
+      - name: OpenAPI client is current
+        run: |
+          docker compose run --rm api python scripts/export_openapi.py
+          docker compose run --rm web npm run generate:client
+          git diff --exit-code -- packages/api-client
+      - name: End-to-end business loop
+        run: |
+          docker compose up -d
+          timeout 120 sh -c 'until curl -fsS http://localhost:3000/login >/dev/null && curl -fsS http://localhost:8000/healthz >/dev/null; do sleep 2; done'
+          E2E_BASE_URL=http://localhost:3000 npm run test:e2e --workspace apps/web
+      - name: Stop services
+        if: always()
+        run: docker compose down -v
