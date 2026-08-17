@@ -27,6 +27,7 @@ class JobStatus(str, enum.Enum):
     CREATED = "CREATED"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
     SUCCEEDED = "SUCCEEDED"
     FAILED_FINAL = "FAILED_FINAL"
     CANCELLED = "CANCELLED"
@@ -34,8 +35,21 @@ class JobStatus(str, enum.Enum):
 
 class AttemptStatus(str, enum.Enum):
     CREATED = "CREATED"
+    SUBMITTING = "SUBMITTING"
+    SUBMITTED = "SUBMITTED"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
+    FAILED_RETRYABLE = "FAILED_RETRYABLE"
+    FAILED_FINAL = "FAILED_FINAL"
+    TIMED_OUT = "TIMED_OUT"
+    CANCELLED = "CANCELLED"
+
+
+class BatchStatus(str, enum.Enum):
+    RESERVED = "RESERVED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
 
@@ -265,6 +279,32 @@ class Asset(Base, TimestampMixin):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
+class Batch(Base, TimestampMixin):
+    __tablename__ = "batches"
+    __table_args__ = (
+        CheckConstraint("reserved_ms > 0", name="ck_batches_reserved_ms"),
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_batch_owner_idempotency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    ledger_unit: Mapped[str] = mapped_column(String(24), nullable=False)
+    reserved_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[BatchStatus] = mapped_column(
+        Enum(BatchStatus, native_enum=False, length=24),
+        default=BatchStatus.RESERVED,
+        nullable=False,
+    )
+
+    jobs: Mapped[list["Job"]] = relationship(back_populates="batch")
+
+
 class Job(Base, TimestampMixin):
     __tablename__ = "jobs"
 
@@ -278,6 +318,9 @@ class Job(Base, TimestampMixin):
     shot_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("shots.id", ondelete="RESTRICT"), index=True, nullable=False
     )
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="RESTRICT"), index=True
+    )
     quote_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("quotes.id", ondelete="RESTRICT"), unique=True
     )
@@ -287,6 +330,8 @@ class Job(Base, TimestampMixin):
     settlement_status: Mapped[SettlementStatus | None] = mapped_column(
         Enum(SettlementStatus, native_enum=False, length=16)
     )
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, native_enum=False, length=24), default=JobStatus.CREATED, nullable=False
     )
@@ -297,6 +342,7 @@ class Job(Base, TimestampMixin):
     attempts: Mapped[list["Attempt"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="Attempt.number"
     )
+    batch: Mapped[Batch | None] = relationship(back_populates="jobs")
     outputs: Mapped[list["Output"]] = relationship(back_populates="job")
     events: Mapped[list["JobEvent"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="JobEvent.created_at"
@@ -314,6 +360,8 @@ class Attempt(Base, TimestampMixin):
     number: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(String(50), default="mock", nullable=False)
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    failure_message: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[AttemptStatus] = mapped_column(
         Enum(AttemptStatus, native_enum=False, length=24),
         default=AttemptStatus.CREATED,
@@ -391,7 +439,10 @@ class WorkflowRun(Base):
     workflow_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     workflow_name: Mapped[str] = mapped_column(String(80), nullable=False)
     job_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("jobs.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    attempt_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("attempts.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
     )
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     status: Mapped[WorkflowRunStatus] = mapped_column(
@@ -408,3 +459,20 @@ class WorkflowRun(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(500))
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="SET NULL"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

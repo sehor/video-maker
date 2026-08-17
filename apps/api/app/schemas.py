@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import JobStatus
+from app.models import BatchStatus, JobStatus
 
 
 class OrmModel(BaseModel):
@@ -87,9 +87,16 @@ class AssetOut(OrmModel):
 class GenerationCreate(BaseModel):
     shot_id: uuid.UUID
     quote_id: uuid.UUID
-    mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
-        "success"
-    )
+    mock_mode: Literal[
+        "success",
+        "delayed",
+        "failure",
+        "timeout",
+        "flaky",
+        "submit_unknown",
+        "duplicate",
+        "corrupt",
+    ] = "success"
 
 
 class AttemptOut(OrmModel):
@@ -98,6 +105,8 @@ class AttemptOut(OrmModel):
     provider: str
     status: str
     provider_job_id: str | None
+    failure_code: str | None
+    failure_message: str | None
 
 
 class OutputOut(OrmModel):
@@ -120,6 +129,7 @@ class JobOut(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
     shot_id: uuid.UUID
+    batch_id: uuid.UUID | None
     quote_id: uuid.UUID | None
     quote_snapshot: dict | None
     ledger_unit: str | None
@@ -134,6 +144,45 @@ class JobOut(OrmModel):
     events: list[JobEventOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class BatchCreate(BaseModel):
+    project_id: uuid.UUID
+    quote_ids: list[uuid.UUID] = Field(min_length=1, max_length=20)
+    idempotency_key: str = Field(min_length=8, max_length=255)
+    mock_mode: Literal[
+        "success",
+        "delayed",
+        "failure",
+        "timeout",
+        "flaky",
+        "submit_unknown",
+        "duplicate",
+        "corrupt",
+    ] = "success"
+
+
+class BatchOut(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    ledger_unit: str
+    reserved_ms: int
+    idempotency_key: str
+    status: BatchStatus
+    jobs: list[JobOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminAction(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class ReconciliationOut(BaseModel):
+    ok: bool
+    unbalanced_transactions: list[dict]
+    projection_mismatches: list[dict]
+    negative_user_balances: list[dict]
 
 
 class JobList(BaseModel):

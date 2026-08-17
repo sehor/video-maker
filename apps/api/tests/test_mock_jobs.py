@@ -59,9 +59,9 @@ def test_mock_success_produces_playable_mp4(client: TestClient) -> None:
 def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) -> None:
     shot = create_shot(client)
     failed = generate(client, shot["id"], "failure")
-    assert (failed["status"], failed["error_code"]) == ("FAILED_FINAL", "MOCK_PROVIDER_FAILED")
+    assert (failed["status"], failed["error_code"]) == ("FAILED_FINAL", "WORKFLOW_FAILED")
     timed_out = generate(client, shot["id"], "timeout")
-    assert (timed_out["status"], timed_out["error_code"]) == ("FAILED_FINAL", "MOCK_TIMEOUT")
+    assert (timed_out["status"], timed_out["error_code"]) == ("FAILED_FINAL", "NETWORK_TIMEOUT")
     corrupt = generate(client, shot["id"], "corrupt")
     assert (corrupt["status"], corrupt["error_code"]) == ("FAILED_FINAL", "OUTPUT_INVALID_MP4")
     assert corrupt["outputs"][0]["is_valid"] is False

@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from hatchet_sdk.exceptions import IdempotencyCollisionError
 from sqlalchemy import func, select
 
 from app.config import get_settings
@@ -14,6 +15,7 @@ from app.ledger import utcnow
 from app.models import Job, LedgerTransaction, OutboxEvent, WorkflowRun
 from app.outbox import (
     DispatcherCrash,
+    HatchetWorkflowLauncher,
     LocalWorkflowRunner,
     OutboxDispatcher,
 )
@@ -48,7 +50,7 @@ def test_job_reservation_and_outbox_commit_together(client: TestClient, monkeypa
         event = db.scalar(select(OutboxEvent).where(OutboxEvent.aggregate_id == job["id"]))
         assert stored is not None and stored.settlement_status.value == "RESERVED"
         assert event is not None
-        assert event.idempotency_key == f"generation-job:{job['id']}:v1"
+        assert event.idempotency_key == f"attempt:{stored.attempts[0].id}:submit:v1"
         assert event.sent_at is None
         assert (
             db.scalar(
@@ -154,3 +156,34 @@ def test_concurrent_dispatchers_claim_event_once(client: TestClient, monkeypatch
     with SessionLocal() as db:
         event = db.scalar(select(OutboxEvent))
         assert event is not None and event.sent_at is not None and event.attempt_count == 1
+
+
+def test_hatchet_launcher_uses_attempt_key_and_accepts_idempotency_collision(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    class FakeTask:
+        def run_no_wait(self, *, input):
+            calls.append(input)
+
+    monkeypatch.setattr(
+        "app.hatchet_workflow.get_hatchet_generation_task", lambda: (object(), FakeTask())
+    )
+    payload = {
+        "job_id": str(uuid.uuid4()),
+        "attempt_id": str(uuid.uuid4()),
+        "workflow_name": "generation-job-v1",
+    }
+    assert HatchetWorkflowLauncher().start("attempt:test:submit:v1", payload) is True
+    assert calls[0].workflow_key == "attempt:test:submit:v1"
+
+    class DuplicateTask:
+        def run_no_wait(self, *, input):
+            raise IdempotencyCollisionError("existing-run")
+
+    monkeypatch.setattr(
+        "app.hatchet_workflow.get_hatchet_generation_task",
+        lambda: (object(), DuplicateTask()),
+    )
+    assert HatchetWorkflowLauncher().start("attempt:test:submit:v1", payload) is False

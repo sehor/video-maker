@@ -689,6 +689,94 @@
         ]
       }
     },
+    "/v1/batches": {
+      "post": {
+        "summary": "Create Batch",
+        "operationId": "create_batch_v1_batches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/batches/{batch_id}": {
+      "get": {
+        "summary": "Get Batch",
+        "operationId": "get_batch_v1_batches__batch_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/generations": {
       "post": {
         "summary": "Generate",
@@ -845,6 +933,240 @@
         ]
       }
     },
+    "/v1/admin/jobs/{job_id}": {
+      "get": {
+        "summary": "Admin Get Job",
+        "operationId": "admin_get_job_v1_admin_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/jobs/{job_id}/force-release": {
+      "post": {
+        "summary": "Admin Force Release",
+        "operationId": "admin_force_release_v1_admin_jobs__job_id__force_release_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/jobs/{job_id}/retry": {
+      "post": {
+        "summary": "Admin Retry Job",
+        "operationId": "admin_retry_job_v1_admin_jobs__job_id__retry_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminAction"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/reconciliation": {
+      "get": {
+        "summary": "Admin Reconciliation",
+        "operationId": "admin_reconciliation_v1_admin_reconciliation_get",
+        "parameters": [
+          {
+            "name": "x-admin-token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/outputs/{output_id}/content": {
       "get": {
         "summary": "Download Output",
@@ -891,6 +1213,21 @@
   },
   "components": {
     "schemas": {
+      "AdminAction": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "AdminAction"
+      },
       "AssetOut": {
         "properties": {
           "id": {
@@ -966,6 +1303,28 @@
               }
             ],
             "title": "Provider Job Id"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
           }
         },
         "type": "object",
@@ -974,9 +1333,128 @@
           "number",
           "provider",
           "status",
-          "provider_job_id"
+          "provider_job_id",
+          "failure_code",
+          "failure_message"
         ],
         "title": "AttemptOut"
+      },
+      "BatchCreate": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "quote_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Quote Ids"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "mock_mode": {
+            "type": "string",
+            "enum": [
+              "success",
+              "delayed",
+              "failure",
+              "timeout",
+              "flaky",
+              "submit_unknown",
+              "duplicate",
+              "corrupt"
+            ],
+            "title": "Mock Mode",
+            "default": "success"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "quote_ids",
+          "idempotency_key"
+        ],
+        "title": "BatchCreate"
+      },
+      "BatchOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "ledger_unit": {
+            "type": "string",
+            "title": "Ledger Unit"
+          },
+          "reserved_ms": {
+            "type": "integer",
+            "title": "Reserved Ms"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "Idempotency Key"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BatchStatus"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "type": "array",
+            "title": "Jobs"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "ledger_unit",
+          "reserved_ms",
+          "idempotency_key",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BatchOut"
+      },
+      "BatchStatus": {
+        "type": "string",
+        "enum": [
+          "RESERVED",
+          "RUNNING",
+          "SUCCEEDED",
+          "PARTIAL_SUCCESS",
+          "FAILED",
+          "CANCELLED"
+        ],
+        "title": "BatchStatus"
       },
       "Body_upload_asset_v1_uploads_post": {
         "properties": {
@@ -1031,6 +1509,8 @@
               "delayed",
               "failure",
               "timeout",
+              "flaky",
+              "submit_unknown",
               "duplicate",
               "corrupt"
             ],
@@ -1143,6 +1623,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Shot Id"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
           },
           "quote_id": {
             "anyOf": [
@@ -1267,6 +1759,7 @@
           "id",
           "project_id",
           "shot_id",
+          "batch_id",
           "quote_id",
           "quote_snapshot",
           "ledger_unit",
@@ -1287,6 +1780,7 @@
           "CREATED",
           "QUEUED",
           "RUNNING",
+          "CANCEL_REQUESTED",
           "SUCCEEDED",
           "FAILED_FINAL",
           "CANCELLED"
@@ -1591,6 +2085,46 @@
           "created_at"
         ],
         "title": "QuoteOut"
+      },
+      "ReconciliationOut": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "unbalanced_transactions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Unbalanced Transactions"
+          },
+          "projection_mismatches": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Projection Mismatches"
+          },
+          "negative_user_balances": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Negative User Balances"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "unbalanced_transactions",
+          "projection_mismatches",
+          "negative_user_balances"
+        ],
+        "title": "ReconciliationOut"
       },
       "ShotCreate": {
         "properties": {

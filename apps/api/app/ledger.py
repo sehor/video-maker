@@ -2,12 +2,13 @@ import math
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
 from app.models import (
     AppUser,
+    Batch,
     Job,
     LedgerAccount,
     LedgerPosting,
@@ -268,6 +269,62 @@ def reserve_quote(
     return quote
 
 
+def validate_quote(db: Session, quote: Quote, user: AppUser, shot: Shot) -> None:
+    if quote.owner_id != user.id:
+        raise ApiError(404, "QUOTE_NOT_FOUND", "报价不存在或无权访问")
+    if quote.status != QuoteStatus.OPEN:
+        raise ApiError(409, "QUOTE_ALREADY_USED", "报价已使用")
+    if aware(quote.expires_at) <= utcnow():
+        quote.status = QuoteStatus.EXPIRED
+        raise ApiError(409, "QUOTE_EXPIRED", "报价已过期")
+    if (
+        quote.shot_id != shot.id
+        or quote.project_id != shot.project_id
+        or quote.duration_ms != shot.duration_seconds * 1000
+        or quote.aspect_ratio != shot.aspect_ratio
+    ):
+        raise ApiError(409, "QUOTE_PARAMETERS_CHANGED", "镜头参数已变化，请重新报价")
+    tier = db.get(QualityTier, quote.tier_code)
+    price = db.get(PriceVersion, quote.price_version_id)
+    if tier is None or price is None or not tier.enabled or not price.enabled:
+        raise ApiError(409, "QUOTE_TIER_DISABLED", "该质量档已停止接单")
+
+
+def reserve_batch_quotes(
+    db: Session,
+    batch: Batch,
+    user: AppUser,
+    quote_shots: list[tuple[Quote, Shot]],
+) -> None:
+    if not quote_shots:
+        raise ApiError(422, "BATCH_EMPTY", "批次至少包含一个镜头")
+    units = {item.ledger_unit for item, _ in quote_shots}
+    if len(units) != 1:
+        raise ApiError(422, "BATCH_MIXED_UNITS", "一个批次只能使用同一质量档")
+    for item, shot in quote_shots:
+        validate_quote(db, item, user, shot)
+    total_ms = sum(item.reserved_ms for item, _ in quote_shots)
+    unit = units.pop()
+    available = ensure_account(db, user.id, USER_AVAILABLE, unit)
+    reserved = ensure_account(db, user.id, USER_RESERVED, unit)
+    post_transfer(
+        db,
+        kind="BATCH_RESERVE",
+        idempotency_key=f"batch:{batch.id}:reserve:v1",
+        reference_type="batch",
+        reference_id=str(batch.id),
+        unit=unit,
+        debit=available,
+        credit=reserved,
+        amount_ms=total_ms,
+    )
+    batch.ledger_unit = unit
+    batch.reserved_ms = total_ms
+    for item, _ in quote_shots:
+        item.status = QuoteStatus.USED
+        item.used_at = utcnow()
+
+
 def finish_reservation(db: Session, job: Job, *, settle: bool) -> bool:
     if job.settlement_status != SettlementStatus.RESERVED:
         return False
@@ -304,6 +361,73 @@ def finish_reservation(db: Session, job: Job, *, settle: bool) -> bool:
     if changed:
         job.settlement_status = SettlementStatus.RELEASED
     return changed
+
+
+def reserve_for_admin_retry(db: Session, job: Job, audit_id: uuid.UUID) -> None:
+    assert job.ledger_unit is not None and job.reserved_ms is not None
+    available = ensure_account(db, job.owner_id, USER_AVAILABLE, job.ledger_unit)
+    reserved = ensure_account(db, job.owner_id, USER_RESERVED, job.ledger_unit)
+    post_transfer(
+        db,
+        kind="ADMIN_RETRY_RESERVE",
+        idempotency_key=f"job:{job.id}:admin-retry:{audit_id}:reserve:v1",
+        reference_type="job",
+        reference_id=str(job.id),
+        unit=job.ledger_unit,
+        debit=available,
+        credit=reserved,
+        amount_ms=job.reserved_ms,
+    )
+    job.settlement_status = SettlementStatus.RESERVED
+
+
+def reconciliation_report(db: Session) -> dict[str, object]:
+    unbalanced = [
+        {"transaction_id": str(tx_id), "unit": unit, "sum_ms": total}
+        for tx_id, unit, total in db.execute(
+            select(
+                LedgerPosting.transaction_id,
+                LedgerPosting.unit,
+                func.sum(LedgerPosting.amount_ms),
+            )
+            .group_by(LedgerPosting.transaction_id, LedgerPosting.unit)
+            .having(func.sum(LedgerPosting.amount_ms) != 0)
+        )
+    ]
+    projection_mismatches = []
+    for account_id, balance_ms in db.execute(
+        select(WalletBalance.account_id, WalletBalance.balance_ms)
+    ):
+        posting_total = db.scalar(
+            select(func.coalesce(func.sum(LedgerPosting.amount_ms), 0)).where(
+                LedgerPosting.account_id == account_id
+            )
+        )
+        if posting_total != balance_ms:
+            projection_mismatches.append(
+                {
+                    "account_id": str(account_id),
+                    "balance_ms": balance_ms,
+                    "posting_total_ms": posting_total,
+                }
+            )
+    negative_user_balances = [
+        {"account_id": str(account_id), "balance_ms": balance_ms}
+        for account_id, balance_ms in db.execute(
+            select(WalletBalance.account_id, WalletBalance.balance_ms)
+            .join(LedgerAccount, LedgerAccount.id == WalletBalance.account_id)
+            .where(
+                LedgerAccount.code.in_([USER_AVAILABLE, USER_RESERVED]),
+                WalletBalance.balance_ms < 0,
+            )
+        )
+    ]
+    return {
+        "ok": not unbalanced and not projection_mismatches and not negative_user_balances,
+        "unbalanced_transactions": unbalanced,
+        "projection_mismatches": projection_mismatches,
+        "negative_user_balances": negative_user_balances,
+    }
 
 
 def wallet_balances(db: Session, user_id: uuid.UUID) -> dict[str, dict[str, int]]:

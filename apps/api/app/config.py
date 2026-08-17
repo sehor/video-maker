@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     storage_root: Path = Path("./data/storage")
     max_upload_bytes: int = 50 * 1024 * 1024
     outbox_poll_interval_seconds: float = 0.5
+    workflow_backend: Literal["local", "hatchet"] = "local"
+    admin_api_token: str = "development-admin-token"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
