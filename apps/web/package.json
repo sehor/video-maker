@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
-    "lint": "eslint .",
+    "lint": "nuxt prepare && eslint .",
     "test": "nuxt prepare && vitest run",
     "test:e2e": "playwright test",
     "auth:migrate": "better-auth migrate --config server/utils/auth.ts --yes",
@@ -14,14 +14,14 @@
   "dependencies": {
     "@nuxt/ui": "^4.0.1",
     "@video-factory/api-client": "workspace:*",
-    "better-auth": "^1.3.7",
+    "better-auth": "1.4.21",
     "nuxt": "^4.1.1",
     "pg": "^8.16.3",
     "vue": "^3.5.21",
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
-    "@better-auth/cli": "^1.3.7",
+    "@better-auth/cli": "1.4.21",
     "@nuxt/eslint": "^1.9.0",
     "@playwright/test": "^1.55.0",
     "@types/pg": "^8.15.5",

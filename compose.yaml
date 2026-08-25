@@ -45,7 +45,7 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
       NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
       NUXT_PUBLIC_AUTH_BASE_URL: ${NUXT_PUBLIC_AUTH_BASE_URL:-http://localhost:3000}
-    command: sh -c "pnpm run auth:migrate && pnpm run dev -- --host 0.0.0.0"
+    command: sh -c "pnpm run auth:migrate && pnpm run dev --host 0.0.0.0"
     depends_on:
       postgres:
         condition: service_healthy

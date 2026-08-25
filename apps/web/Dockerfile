@@ -9,4 +9,4 @@ COPY apps/web apps/web
 COPY packages/api-client packages/api-client
 WORKDIR /workspace/apps/web
 EXPOSE 3000
-CMD ["pnpm", "run", "dev", "--", "--host", "0.0.0.0"]
+CMD ["pnpm", "run", "dev", "--host", "0.0.0.0"]
