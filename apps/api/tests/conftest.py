@@ -2,17 +2,24 @@ import os
 from pathlib import Path
 from typing import Annotated
 
-os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
-os.environ["STORAGE_ROOT"] = "./test-storage"
-
 import pytest
 from fastapi import Header
 from fastapi.testclient import TestClient
 
-from app.auth import Identity, get_identity
-from app.config import get_settings
-from app.db import Base, engine
-from app.main import app
+test_database_url = os.environ.get("TEST_DATABASE_URL")
+if test_database_url:
+    database_name = test_database_url.rsplit("/", 1)[-1].split("?", 1)[0]
+    if not database_name.endswith("_test"):
+        raise RuntimeError("TEST_DATABASE_URL must target a database ending in _test")
+    os.environ["DATABASE_URL"] = test_database_url
+else:
+    os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
+os.environ["STORAGE_ROOT"] = "./test-storage"
+
+from app.auth import Identity, get_identity  # noqa: E402
+from app.config import get_settings  # noqa: E402
+from app.db import Base, engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 get_settings.cache_clear()
 

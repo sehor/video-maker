@@ -1,6 +1,4 @@
 import asyncio
-import subprocess
-import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
+from app.ledger import finish_reservation
 from app.models import (
     AttemptStatus,
     GenerationAttempt,
@@ -21,6 +20,8 @@ from app.models import (
 )
 from app.storage import LocalObjectStorage
 
+MOCK_VIDEO_FIXTURE = Path(__file__).with_name("fixtures") / "mock-success.mp4"
+
 
 class VideoProvider(Protocol):
     async def submit(self, job_id: uuid.UUID) -> None: ...
@@ -31,7 +32,8 @@ class VideoProvider(Protocol):
 
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
-    JobStatus.CREATED: {JobStatus.QUEUED, JobStatus.CANCELLED},
+    JobStatus.CREATED: {JobStatus.RESERVED, JobStatus.CANCELLED},
+    JobStatus.RESERVED: {JobStatus.QUEUED, JobStatus.CANCELLED},
     JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED},
     JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED_FINAL, JobStatus.CANCELLED},
     JobStatus.SUCCEEDED: set(),
@@ -101,7 +103,7 @@ class MockVideoProvider:
             self._finish_corrupt(job_id, provider_id)
             return
 
-        content = self._create_mp4(job.duration_ms / 1000)
+        content = MOCK_VIDEO_FIXTURE.read_bytes()
         self._finish_success(job_id, provider_id, content)
         if job.mock_mode == "duplicate":
             self._finish_success(job_id, provider_id, content)
@@ -136,6 +138,7 @@ class MockVideoProvider:
                     if code == "MOCK_TIMEOUT"
                     else AttemptStatus.FAILED_FINAL
                 )
+                finish_reservation(db, job, settle=False)
                 db.commit()
 
     def _finish_corrupt(self, job_id: uuid.UUID, provider_id: str) -> None:
@@ -164,6 +167,7 @@ class MockVideoProvider:
             attempt.failure_code = "OUTPUT_INVALID_MP4"
             attempt.finished_at = datetime.now(UTC)
             attempt.status = AttemptStatus.FAILED_FINAL
+            finish_reservation(db, job, settle=False)
             db.commit()
 
     def _finish_success(self, job_id: uuid.UUID, provider_id: str, content: bytes) -> None:
@@ -197,31 +201,5 @@ class MockVideoProvider:
             job.finished_at = datetime.now(UTC)
             attempt.status = AttemptStatus.SUCCEEDED
             attempt.finished_at = datetime.now(UTC)
+            finish_reservation(db, job, settle=True)
             db.commit()
-
-    @staticmethod
-    def _create_mp4(duration_seconds: float) -> bytes:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "mock.mp4"
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"color=c=0x111827:s=1280x720:d={duration_seconds}",
-                    "-c:v",
-                    "mpeg4",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-movflags",
-                    "+faststart",
-                    "-y",
-                    str(path),
-                ],
-                check=True,
-                timeout=15,
-            )
-            return path.read_bytes()

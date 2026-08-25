@@ -22,7 +22,8 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
     database_url = f"sqlite+pysqlite:///{tmp_path / 'empty.db'}"
     config = alembic_config(database_url)
     command.upgrade(config, "head")
-    tables = set(inspect(create_engine(database_url)).get_table_names())
+    engine = create_engine(database_url)
+    tables = set(inspect(engine).get_table_names())
     assert {
         "project_assets",
         "shot_references",
@@ -30,8 +31,27 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "generation_attempts",
         "generation_outputs",
         "job_events",
+        "quality_tiers",
+        "price_versions",
+        "generation_quotes",
+        "wallet_accounts",
+        "wallet_balances",
+        "ledger_transactions",
+        "ledger_postings",
     } <= tables
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
+    with engine.connect() as connection:
+        triggers = set(
+            connection.scalars(
+                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+            )
+        )
+    assert {
+        "ledger_postings_immutable_update",
+        "ledger_postings_immutable_delete",
+        "generation_quote_terms_immutable",
+        "generation_quote_status_monotonic",
+    } <= triggers
 
     command.downgrade(config, "0001_stage_one")
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
@@ -83,3 +103,9 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     assert "uq_generation_jobs_final_output_id" in {
         constraint["name"] for constraint in inspector.get_unique_constraints("generation_jobs")
     }
+    assert {"quote_id", "ledger_unit", "reserved_amount_ms", "settlement_status"} <= {
+        column["name"] for column in inspector.get_columns("generation_jobs")
+    }
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM quality_tiers")) == 3
+        assert connection.scalar(text("SELECT count(*) FROM price_versions")) == 4

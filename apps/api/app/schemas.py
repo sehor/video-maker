@@ -2,13 +2,15 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import (
     AttemptStatus,
     JobStatus,
     OutputValidationStatus,
     ProjectAssetStatus,
+    QuoteStatus,
+    SettlementStatus,
 )
 
 
@@ -103,8 +105,99 @@ class ProjectAssetOut(OrmModel):
     created_at: datetime
 
 
+class QualityTierOut(OrmModel):
+    code: str
+    display_name: str
+    billing_unit: str
+    enabled: bool
+
+
+class QualityTierList(BaseModel):
+    items: list[QualityTierOut]
+
+
+class QuoteCreate(BaseModel):
+    shot_id: uuid.UUID
+    tier: str = Field(min_length=1, max_length=24, pattern=r"^[A-Z][A-Z0-9_]*$")
+    resolution: str = "720P"
+    variant_count: int = Field(default=1, ge=1, le=1)
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def normalize_tier(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def normalize_resolution(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.upper()
+        if normalized not in {"720P", "1080P"}:
+            raise ValueError("resolution must be 720P or 1080P")
+        return normalized
+
+
+class QuoteOut(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    shot_id: uuid.UUID
+    price_version_id: uuid.UUID
+    tier_code: str
+    billing_unit: str
+    duration_ms: int
+    variant_count: int
+    resolution: str
+    aspect_ratio: str
+    reserved_ms: int
+    status: QuoteStatus
+    expires_at: datetime
+    created_at: datetime
+
+
+class TestGrantCreate(BaseModel):
+    tier: str = Field(min_length=1, max_length=24, pattern=r"^[A-Z][A-Z0-9_]*$")
+    amount_ms: int = Field(gt=0, le=86_400_000)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("tier", mode="before")
+    @classmethod
+    def normalize_tier(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+
+class LedgerPostingOut(OrmModel):
+    id: uuid.UUID
+    account_id: uuid.UUID
+    unit: str
+    amount_ms: int
+    created_at: datetime
+
+
+class LedgerTransactionOut(OrmModel):
+    id: uuid.UUID
+    tx_type: str
+    idempotency_key: str
+    reference_type: str
+    reference_id: str
+    unit: str
+    metadata_json: dict[str, object]
+    postings: list[LedgerPostingOut] = Field(default_factory=list)
+    created_at: datetime
+
+
+class LedgerTransactionList(BaseModel):
+    items: list[LedgerTransactionOut]
+
+
+class WalletOut(BaseModel):
+    balances: dict[str, dict[str, int]]
+
+
 class GenerationCreate(BaseModel):
     shot_id: uuid.UUID
+    quote_id: uuid.UUID
     mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
         "success"
     )
@@ -152,6 +245,13 @@ class GenerationJobOut(OrmModel):
     resolution: str
     aspect_ratio: str
     variant_index: int
+    quote_id: uuid.UUID | None
+    quote_snapshot: dict[str, object] = Field(
+        default_factory=dict, validation_alias="quote_snapshot_json"
+    )
+    ledger_unit: str | None
+    reserved_ms: int | None = Field(default=None, validation_alias="reserved_amount_ms")
+    settlement_status: SettlementStatus | None
     status: JobStatus
     final_output_id: uuid.UUID | None
     failure_code: str | None

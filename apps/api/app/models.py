@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -49,6 +50,18 @@ class AttemptStatus(str, enum.Enum):
     FAILED_FINAL = "FAILED_FINAL"
     CANCELLED = "CANCELLED"
     TIMED_OUT = "TIMED_OUT"
+
+
+class QuoteStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    USED = "USED"
+    EXPIRED = "EXPIRED"
+
+
+class SettlementStatus(str, enum.Enum):
+    RESERVED = "RESERVED"
+    SETTLED = "SETTLED"
+    RELEASED = "RELEASED"
 
 
 class ProjectAssetStatus(str, enum.Enum):
@@ -193,6 +206,188 @@ class ShotReference(Base, TimestampMixin):
     )
 
 
+class QualityTier(Base, TimestampMixin):
+    __tablename__ = "quality_tiers"
+
+    code: Mapped[str] = mapped_column(String(24), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    billing_unit: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class PriceVersion(Base, TimestampMixin):
+    __tablename__ = "price_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "tier_code",
+            "version",
+            "resolution",
+            name="uq_price_versions_tier_version_resolution",
+        ),
+        CheckConstraint("version > 0", name="ck_price_versions_version"),
+        CheckConstraint("charge_numerator > 0", name="ck_price_versions_numerator"),
+        CheckConstraint("charge_denominator > 0", name="ck_price_versions_denominator"),
+        CheckConstraint("resolution IN ('720P', '1080P')", name="ck_price_versions_resolution"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tier_code: Mapped[str] = mapped_column(
+        ForeignKey("quality_tiers.code", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    resolution: Mapped[str] = mapped_column(String(8), nullable=False)
+    charge_numerator: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    charge_denominator: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Quote(Base, TimestampMixin):
+    __tablename__ = "generation_quotes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "user_id"],
+            ["projects.id", "projects.owner_id"],
+            name="fk_generation_quotes_project_owner",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["shot_id", "project_id"],
+            ["shots.id", "shots.project_id"],
+            name="fk_generation_quotes_shot_project",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("id", "user_id", "shot_id", name="uq_generation_quotes_identity"),
+        CheckConstraint("duration_ms > 0", name="ck_generation_quotes_duration_ms"),
+        CheckConstraint("variant_count = 1", name="ck_generation_quotes_single_variant"),
+        CheckConstraint("reserved_ms > 0", name="ck_generation_quotes_reserved_ms"),
+        CheckConstraint("resolution IN ('720P', '1080P')", name="ck_generation_quotes_resolution"),
+        CheckConstraint("aspect_ratio IN ('16:9', '9:16')", name="ck_generation_quotes_aspect"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    shot_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    price_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("price_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    tier_code: Mapped[str] = mapped_column(
+        ForeignKey("quality_tiers.code", ondelete="RESTRICT"), nullable=False
+    )
+    billing_unit: Mapped[str] = mapped_column(String(24), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    variant_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    resolution: Mapped[str] = mapped_column(String(8), nullable=False)
+    aspect_ratio: Mapped[str] = mapped_column(String(8), nullable=False)
+    reserved_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[QuoteStatus] = mapped_column(
+        Enum(QuoteStatus, native_enum=False, length=16),
+        default=QuoteStatus.OPEN,
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LedgerAccount(Base, TimestampMixin):
+    __tablename__ = "wallet_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope_key", "account_type", "unit", name="uq_wallet_accounts_scope_type_unit"
+        ),
+        UniqueConstraint("id", "unit", name="uq_wallet_accounts_id_unit"),
+        CheckConstraint("owner_type IN ('USER', 'PLATFORM')", name="ck_wallet_accounts_owner_type"),
+        CheckConstraint(
+            "account_type IN ('USER_AVAILABLE', 'USER_RESERVED', "
+            "'PLATFORM_ISSUED', 'PLATFORM_CONSUMED', 'PLATFORM_EXPIRED')",
+            name="ck_wallet_accounts_account_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("app_users.id", ondelete="CASCADE"), index=True
+    )
+    account_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    unit: Mapped[str] = mapped_column(String(24), nullable=False)
+
+
+class LedgerTransaction(Base):
+    __tablename__ = "ledger_transactions"
+    __table_args__ = (
+        UniqueConstraint("id", "unit", name="uq_ledger_transactions_id_unit"),
+        UniqueConstraint(
+            "tx_type",
+            "reference_type",
+            "reference_id",
+            name="uq_ledger_transactions_business_action",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tx_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    reference_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    reference_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit: Mapped[str] = mapped_column(String(24), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    postings: Mapped[list["LedgerPosting"]] = relationship(back_populates="transaction")
+
+
+class WalletBalance(Base):
+    __tablename__ = "wallet_balances"
+
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("wallet_accounts.id", ondelete="RESTRICT"), primary_key=True
+    )
+    balance_ms: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class LedgerPosting(Base):
+    __tablename__ = "ledger_postings"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["transaction_id", "unit"],
+            ["ledger_transactions.id", "ledger_transactions.unit"],
+            name="fk_ledger_postings_transaction_unit",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["account_id", "unit"],
+            ["wallet_accounts.id", "wallet_accounts.unit"],
+            name="fk_ledger_postings_account_unit",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("transaction_id", "account_id", name="uq_ledger_postings_tx_account"),
+        CheckConstraint("amount_ms <> 0", name="ck_ledger_postings_nonzero"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    transaction_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    account_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    unit: Mapped[str] = mapped_column(String(24), nullable=False)
+    amount_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    transaction: Mapped[LedgerTransaction] = relationship(back_populates="postings")
+
+
 class GenerationJob(Base, TimestampMixin):
     __tablename__ = "generation_jobs"
     __table_args__ = (
@@ -209,12 +404,20 @@ class GenerationJob(Base, TimestampMixin):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
+            ["quote_id", "user_id", "shot_id"],
+            ["generation_quotes.id", "generation_quotes.user_id", "generation_quotes.shot_id"],
+            name="fk_generation_jobs_quote_identity",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
             ["final_output_id", "id"],
             ["generation_outputs.id", "generation_outputs.job_id"],
             name="fk_generation_jobs_final_output",
             use_alter=True,
         ),
         UniqueConstraint("final_output_id", name="uq_generation_jobs_final_output_id"),
+        UniqueConstraint("quote_id", name="uq_generation_jobs_quote_id"),
+        UniqueConstraint("reserved_tx_id", name="uq_generation_jobs_reserved_tx_id"),
         CheckConstraint("duration_ms > 0", name="ck_generation_jobs_duration_ms"),
         CheckConstraint("resolution IN ('720P', '1080P')", name="ck_generation_jobs_resolution"),
         CheckConstraint("aspect_ratio IN ('16:9', '9:16')", name="ck_generation_jobs_aspect"),
@@ -231,11 +434,19 @@ class GenerationJob(Base, TimestampMixin):
     resolution: Mapped[str] = mapped_column(String(8), default="720P", nullable=False)
     aspect_ratio: Mapped[str] = mapped_column(String(8), nullable=False)
     variant_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    quote_id: Mapped[uuid.UUID | None] = mapped_column()
     quote_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, native_enum=False, length=24), default=JobStatus.CREATED, nullable=False
     )
-    reserved_tx_id: Mapped[uuid.UUID | None] = mapped_column()
+    ledger_unit: Mapped[str | None] = mapped_column(String(24))
+    reserved_amount_ms: Mapped[int | None] = mapped_column(BigInteger)
+    settlement_status: Mapped[SettlementStatus | None] = mapped_column(
+        Enum(SettlementStatus, native_enum=False, length=16)
+    )
+    reserved_tx_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("ledger_transactions.id", ondelete="RESTRICT")
+    )
     selected_route_candidate_id: Mapped[uuid.UUID | None] = mapped_column()
     final_output_id: Mapped[uuid.UUID | None] = mapped_column()
     failure_code: Mapped[str | None] = mapped_column(String(64))

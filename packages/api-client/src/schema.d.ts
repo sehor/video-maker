@@ -162,6 +162,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Generation Quote */
+        post: operations["create_generation_quote_v1_quotes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet/test-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Test Grant */
+        post: operations["create_test_grant_v1_wallet_test_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wallet */
+        get: operations["get_wallet_v1_wallet_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Ledger Transactions */
+        get: operations["list_ledger_transactions_v1_ledger_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations": {
         parameters: {
             query?: never;
@@ -304,6 +372,11 @@ export interface components {
              */
             shot_id: string;
             /**
+             * Quote Id
+             * Format: uuid
+             */
+            quote_id: string;
+            /**
              * Mock Mode
              * @default success
              * @enum {string}
@@ -344,6 +417,17 @@ export interface components {
             aspect_ratio: string;
             /** Variant Index */
             variant_index: number;
+            /** Quote Id */
+            quote_id: string | null;
+            /** Quote Snapshot */
+            quote_snapshot?: {
+                [key: string]: unknown;
+            };
+            /** Ledger Unit */
+            ledger_unit: string | null;
+            /** Reserved Ms */
+            reserved_ms?: number | null;
+            settlement_status: components["schemas"]["SettlementStatus"] | null;
             status: components["schemas"]["JobStatus"];
             /** Final Output Id */
             final_output_id: string | null;
@@ -431,6 +515,62 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "CREATED" | "RESERVED" | "QUEUED" | "ROUTING" | "SUBMITTED" | "RUNNING" | "POSTPROCESSING" | "VALIDATING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED" | "EXPIRED" | "REJECTED_POLICY";
+        /** LedgerPostingOut */
+        LedgerPostingOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Account Id
+             * Format: uuid
+             */
+            account_id: string;
+            /** Unit */
+            unit: string;
+            /** Amount Ms */
+            amount_ms: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** LedgerTransactionList */
+        LedgerTransactionList: {
+            /** Items */
+            items: components["schemas"]["LedgerTransactionOut"][];
+        };
+        /** LedgerTransactionOut */
+        LedgerTransactionOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Tx Type */
+            tx_type: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reference Type */
+            reference_type: string;
+            /** Reference Id */
+            reference_id: string;
+            /** Unit */
+            unit: string;
+            /** Metadata Json */
+            metadata_json: {
+                [key: string]: unknown;
+            };
+            /** Postings */
+            postings?: components["schemas"]["LedgerPostingOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /**
          * OutputValidationStatus
          * @enum {string}
@@ -511,6 +651,84 @@ export interface components {
             /** Description */
             description?: string | null;
         };
+        /** QuoteCreate */
+        QuoteCreate: {
+            /**
+             * Shot Id
+             * Format: uuid
+             */
+            shot_id: string;
+            /** Tier */
+            tier: string;
+            /**
+             * Resolution
+             * @default 720P
+             */
+            resolution: string;
+            /**
+             * Variant Count
+             * @default 1
+             */
+            variant_count: number;
+        };
+        /** QuoteOut */
+        QuoteOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Shot Id
+             * Format: uuid
+             */
+            shot_id: string;
+            /**
+             * Price Version Id
+             * Format: uuid
+             */
+            price_version_id: string;
+            /** Tier Code */
+            tier_code: string;
+            /** Billing Unit */
+            billing_unit: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Variant Count */
+            variant_count: number;
+            /** Resolution */
+            resolution: string;
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Reserved Ms */
+            reserved_ms: number;
+            status: components["schemas"]["QuoteStatus"];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * QuoteStatus
+         * @enum {string}
+         */
+        QuoteStatus: "OPEN" | "USED" | "EXPIRED";
+        /**
+         * SettlementStatus
+         * @enum {string}
+         */
+        SettlementStatus: "RESERVED" | "SETTLED" | "RELEASED";
         /** ShotCreate */
         ShotCreate: {
             /** Title */
@@ -606,6 +824,17 @@ export interface components {
             /** Aspect Ratio */
             aspect_ratio?: ("16:9" | "9:16") | null;
         };
+        /** TestGrantCreate */
+        TestGrantCreate: {
+            /** Tier */
+            tier: string;
+            /** Amount Ms */
+            amount_ms: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reason */
+            reason: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -614,6 +843,15 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WalletOut */
+        WalletOut: {
+            /** Balances */
+            balances: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
         };
     };
     responses: never;
@@ -1067,6 +1305,123 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_generation_quote_v1_quotes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_test_grant_v1_wallet_test_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestGrantCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTransactionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_wallet_v1_wallet_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletOut"];
+                };
+            };
+        };
+    };
+    list_ledger_transactions_v1_ledger_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTransactionList"];
                 };
             };
             /** @description Validation Error */
