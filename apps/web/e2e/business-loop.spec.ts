@@ -15,6 +15,8 @@ test('register, create project, create shot and run mock generation', async ({ p
   await page.getByLabel('镜头名称').fill('E2E 镜头')
   await page.getByLabel('提示词').fill('电影感的雨夜城市街道')
   await page.getByRole('button', { name: '创建镜头' }).click()
+  await page.getByRole('button', { name: '领取 10 秒测试额度' }).click()
+  await expect(page.getByText('FAST 可用：10 秒')).toBeVisible()
   await page.getByRole('button', { name: '开始生成' }).click()
   await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('video')).toBeVisible()

@@ -13,16 +13,27 @@ from app.auth import CurrentUser
 from app.config import get_settings
 from app.db import get_db
 from app.errors import ApiError, not_found
+from app.ledger import (
+    create_quote,
+    finish_reservation,
+    grant_seconds,
+    reserve_quote_for_job,
+    wallet_balances,
+)
 from app.models import (
     AttemptStatus,
     GenerationAttempt,
     GenerationJob,
     GenerationOutput,
     JobStatus,
+    LedgerAccount,
+    LedgerPosting,
+    LedgerTransaction,
     OutputValidationStatus,
     Project,
     ProjectAsset,
     ProjectAssetStatus,
+    SettlementStatus,
     Shot,
     ShotReference,
 )
@@ -31,17 +42,23 @@ from app.schemas import (
     GenerationCreate,
     GenerationJobList,
     GenerationJobOut,
+    LedgerTransactionList,
+    LedgerTransactionOut,
     ProjectAssetOut,
     ProjectCreate,
     ProjectList,
     ProjectOut,
     ProjectUpdate,
+    QuoteCreate,
+    QuoteOut,
     ShotCreate,
     ShotList,
     ShotOut,
     ShotReferenceCreate,
     ShotReferenceOut,
     ShotUpdate,
+    TestGrantCreate,
+    WalletOut,
 )
 from app.storage import LocalObjectStorage
 
@@ -324,6 +341,76 @@ def load_job(db: Session, job_id: uuid.UUID, owner_id: uuid.UUID) -> GenerationJ
     return job
 
 
+@router.post("/quotes", response_model=QuoteOut, status_code=201)
+def create_generation_quote(
+    payload: QuoteCreate,
+    user: CurrentUser,
+    db: Db,
+):
+    shot = owned_shot(db, payload.shot_id, user.id)
+    quote = create_quote(
+        db,
+        user,
+        shot,
+        tier_code=payload.tier,
+        resolution=payload.resolution,
+        variant_count=payload.variant_count,
+    )
+    db.commit()
+    db.refresh(quote)
+    return quote
+
+
+@router.post("/wallet/test-grants", response_model=LedgerTransactionOut, status_code=201)
+def create_test_grant(
+    payload: TestGrantCreate,
+    user: CurrentUser,
+    db: Db,
+) -> LedgerTransaction:
+    if get_settings().environment == "production":
+        raise not_found("endpoint")
+    transaction = grant_seconds(
+        db,
+        user,
+        tier_code=payload.tier,
+        amount_ms=payload.amount_ms,
+        idempotency_key=payload.idempotency_key,
+        reason=payload.reason,
+    )
+    db.commit()
+    return db.scalar(
+        select(LedgerTransaction)
+        .where(LedgerTransaction.id == transaction.id)
+        .options(selectinload(LedgerTransaction.postings))
+    )
+
+
+@router.get("/wallet", response_model=WalletOut)
+def get_wallet(user: CurrentUser, db: Db) -> WalletOut:
+    return WalletOut(balances=wallet_balances(db, user.id))
+
+
+@router.get("/ledger", response_model=LedgerTransactionList)
+def list_ledger_transactions(
+    user: CurrentUser,
+    db: Db,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> LedgerTransactionList:
+    transactions = list(
+        db.scalars(
+            select(LedgerTransaction)
+            .join(LedgerPosting)
+            .join(LedgerAccount, LedgerAccount.id == LedgerPosting.account_id)
+            .where(LedgerAccount.owner_id == user.id)
+            .options(selectinload(LedgerTransaction.postings))
+            .distinct()
+            .order_by(LedgerTransaction.created_at.desc(), LedgerTransaction.id.desc())
+            .limit(limit)
+        ).unique()
+    )
+    return LedgerTransactionList(items=transactions)
+
+
 @router.post("/generations", response_model=GenerationJobOut, status_code=202)
 def generate(
     payload: GenerationCreate,
@@ -351,6 +438,7 @@ def generate(
     )
     db.add(job)
     db.flush()
+    reserve_quote_for_job(db, user, shot, payload.quote_id, job)
     attempt = GenerationAttempt(
         job_id=job.id,
         attempt_no=1,
@@ -373,13 +461,15 @@ def get_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJo
 @router.post("/generations/{job_id}/cancel", response_model=GenerationJobOut)
 def cancel_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJob:
     job = load_job(db, job_id, user.id)
-    if job.status not in {JobStatus.CREATED, JobStatus.QUEUED, JobStatus.RUNNING}:
+    if job.status not in {JobStatus.CREATED, JobStatus.RESERVED, JobStatus.QUEUED}:
         raise ApiError(409, "JOB_NOT_CANCELLABLE", "当前任务状态不能取消")
     if transition(db, job, JobStatus.CANCELLED, "job.cancelled", f"{job.id}:cancelled"):
         job.finished_at = datetime.now(UTC)
         for attempt in job.attempts:
             if attempt.status in {AttemptStatus.CREATED, AttemptStatus.RUNNING}:
                 attempt.status = AttemptStatus.CANCELLED
+        if job.settlement_status == SettlementStatus.RESERVED:
+            finish_reservation(db, job, settle=False)
         db.commit()
     return load_job(db, job.id, user.id)
 
