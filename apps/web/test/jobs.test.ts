@@ -6,6 +6,8 @@ describe('isTerminalStatus', () => {
     expect(isTerminalStatus('SUCCEEDED')).toBe(true)
     expect(isTerminalStatus('FAILED_FINAL')).toBe(true)
     expect(isTerminalStatus('CANCELLED')).toBe(true)
+    expect(isTerminalStatus('EXPIRED')).toBe(true)
+    expect(isTerminalStatus('REJECTED_POLICY')).toBe(true)
     expect(isTerminalStatus('RUNNING')).toBe(false)
   })
 })

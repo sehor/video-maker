@@ -4,7 +4,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import JobStatus
+from app.models import (
+    AttemptStatus,
+    JobStatus,
+    OutputValidationStatus,
+    ProjectAssetStatus,
+)
 
 
 class OrmModel(BaseModel):
@@ -58,6 +63,18 @@ class ShotUpdate(BaseModel):
     aspect_ratio: Literal["16:9", "9:16"] | None = None
 
 
+class ShotReferenceCreate(BaseModel):
+    asset_id: uuid.UUID
+    reference_role: str = Field(min_length=1, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
+
+
+class ShotReferenceOut(OrmModel):
+    id: uuid.UUID
+    asset_id: uuid.UUID
+    reference_role: str
+    created_at: datetime
+
+
 class ShotOut(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -65,6 +82,7 @@ class ShotOut(OrmModel):
     prompt: str
     duration_seconds: int
     aspect_ratio: str
+    references: list[ShotReferenceOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -74,13 +92,14 @@ class ShotList(BaseModel):
     next_cursor: str | None = None
 
 
-class AssetOut(OrmModel):
+class ProjectAssetOut(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
     original_filename: str
-    mime_type: str
+    media_type: str
     size_bytes: int
     sha256: str
+    status: ProjectAssetStatus
     created_at: datetime
 
 
@@ -91,45 +110,60 @@ class GenerationCreate(BaseModel):
     )
 
 
-class AttemptOut(OrmModel):
+class GenerationAttemptOut(OrmModel):
     id: uuid.UUID
-    number: int
-    provider: str
-    status: str
+    attempt_no: int
+    provider_code: str
+    status: AttemptStatus
     provider_job_id: str | None
+    workflow_version: str
+    failure_code: str | None
 
 
-class OutputOut(OrmModel):
+class GenerationOutputOut(OrmModel):
     id: uuid.UUID
-    mime_type: str
+    attempt_id: uuid.UUID
+    media_type: str
+    duration_ms: int | None
+    width: int | None
+    height: int | None
+    fps: float | None
+    codec: str | None
     size_bytes: int
     sha256: str
-    is_valid: bool
+    validation_status: OutputValidationStatus
 
 
 class JobEventOut(OrmModel):
     id: uuid.UUID
+    attempt_id: uuid.UUID | None
     event_type: str
     from_status: str | None
     to_status: str
     created_at: datetime
 
 
-class JobOut(OrmModel):
+class GenerationJobOut(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
     shot_id: uuid.UUID
+    tier_code: str
+    duration_ms: int
+    resolution: str
+    aspect_ratio: str
+    variant_index: int
     status: JobStatus
-    mock_mode: str
-    error_code: str | None
+    final_output_id: uuid.UUID | None
+    failure_code: str | None
     error_message: str | None
-    attempts: list[AttemptOut] = Field(default_factory=list)
-    outputs: list[OutputOut] = Field(default_factory=list)
+    mock_mode: str
+    attempts: list[GenerationAttemptOut] = Field(default_factory=list)
+    outputs: list[GenerationOutputOut] = Field(default_factory=list)
     events: list[JobEventOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
-class JobList(BaseModel):
-    items: list[JobOut]
+class GenerationJobList(BaseModel):
+    items: list[GenerationJobOut]
     next_cursor: str | None = None

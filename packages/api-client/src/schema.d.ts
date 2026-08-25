@@ -77,6 +77,40 @@ export interface paths {
         patch: operations["update_shot_v1_shots__shot_id__patch"];
         trace?: never;
     };
+    "/v1/shots/{shot_id}/references": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Shot Reference */
+        post: operations["create_shot_reference_v1_shots__shot_id__references_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/shots/{shot_id}/references/{reference_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Shot Reference */
+        delete: operations["delete_shot_reference_v1_shots__shot_id__references__reference_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/uploads": {
         parameters: {
             query?: never;
@@ -217,48 +251,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AssetOut */
-        AssetOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /**
-             * Project Id
-             * Format: uuid
-             */
-            project_id: string;
-            /** Original Filename */
-            original_filename: string;
-            /** Mime Type */
-            mime_type: string;
-            /** Size Bytes */
-            size_bytes: number;
-            /** Sha256 */
-            sha256: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /** AttemptOut */
-        AttemptOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Number */
-            number: number;
-            /** Provider */
-            provider: string;
-            /** Status */
-            status: string;
-            /** Provider Job Id */
-            provider_job_id: string | null;
-        };
+        /**
+         * AttemptStatus
+         * @enum {string}
+         */
+        AttemptStatus: "CREATED" | "SUBMITTING" | "SUBMITTED" | "RUNNING" | "SUCCEEDED" | "FAILED_RETRYABLE" | "FAILED_FINAL" | "CANCELLED" | "TIMED_OUT";
         /** Body_upload_asset_v1_uploads_post */
         Body_upload_asset_v1_uploads_post: {
             /**
@@ -280,6 +277,25 @@ export interface components {
              */
             file: string;
         };
+        /** GenerationAttemptOut */
+        GenerationAttemptOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Attempt No */
+            attempt_no: number;
+            /** Provider Code */
+            provider_code: string;
+            status: components["schemas"]["AttemptStatus"];
+            /** Provider Job Id */
+            provider_job_id: string | null;
+            /** Workflow Version */
+            workflow_version: string;
+            /** Failure Code */
+            failure_code: string | null;
+        };
         /** GenerationCreate */
         GenerationCreate: {
             /**
@@ -294,39 +310,15 @@ export interface components {
              */
             mock_mode: "success" | "delayed" | "failure" | "timeout" | "duplicate" | "corrupt";
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
-        /** JobEventOut */
-        JobEventOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Event Type */
-            event_type: string;
-            /** From Status */
-            from_status: string | null;
-            /** To Status */
-            to_status: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /** JobList */
-        JobList: {
+        /** GenerationJobList */
+        GenerationJobList: {
             /** Items */
-            items: components["schemas"]["JobOut"][];
+            items: components["schemas"]["GenerationJobOut"][];
             /** Next Cursor */
             next_cursor?: string | null;
         };
-        /** JobOut */
-        JobOut: {
+        /** GenerationJobOut */
+        GenerationJobOut: {
             /**
              * Id
              * Format: uuid
@@ -342,17 +334,29 @@ export interface components {
              * Format: uuid
              */
             shot_id: string;
+            /** Tier Code */
+            tier_code: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Resolution */
+            resolution: string;
+            /** Aspect Ratio */
+            aspect_ratio: string;
+            /** Variant Index */
+            variant_index: number;
             status: components["schemas"]["JobStatus"];
-            /** Mock Mode */
-            mock_mode: string;
-            /** Error Code */
-            error_code: string | null;
+            /** Final Output Id */
+            final_output_id: string | null;
+            /** Failure Code */
+            failure_code: string | null;
             /** Error Message */
             error_message: string | null;
+            /** Mock Mode */
+            mock_mode: string;
             /** Attempts */
-            attempts?: components["schemas"]["AttemptOut"][];
+            attempts?: components["schemas"]["GenerationAttemptOut"][];
             /** Outputs */
-            outputs?: components["schemas"]["OutputOut"][];
+            outputs?: components["schemas"]["GenerationOutputOut"][];
             /** Events */
             events?: components["schemas"]["JobEventOut"][];
             /**
@@ -366,27 +370,104 @@ export interface components {
              */
             updated_at: string;
         };
-        /**
-         * JobStatus
-         * @enum {string}
-         */
-        JobStatus: "CREATED" | "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED";
-        /** OutputOut */
-        OutputOut: {
+        /** GenerationOutputOut */
+        GenerationOutputOut: {
             /**
              * Id
              * Format: uuid
              */
             id: string;
-            /** Mime Type */
-            mime_type: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /** Media Type */
+            media_type: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Width */
+            width: number | null;
+            /** Height */
+            height: number | null;
+            /** Fps */
+            fps: number | null;
+            /** Codec */
+            codec: string | null;
             /** Size Bytes */
             size_bytes: number;
             /** Sha256 */
             sha256: string;
-            /** Is Valid */
-            is_valid: boolean;
+            validation_status: components["schemas"]["OutputValidationStatus"];
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** JobEventOut */
+        JobEventOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Attempt Id */
+            attempt_id: string | null;
+            /** Event Type */
+            event_type: string;
+            /** From Status */
+            from_status: string | null;
+            /** To Status */
+            to_status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * JobStatus
+         * @enum {string}
+         */
+        JobStatus: "CREATED" | "RESERVED" | "QUEUED" | "ROUTING" | "SUBMITTED" | "RUNNING" | "POSTPROCESSING" | "VALIDATING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED" | "EXPIRED" | "REJECTED_POLICY";
+        /**
+         * OutputValidationStatus
+         * @enum {string}
+         */
+        OutputValidationStatus: "PENDING" | "VALID" | "INVALID";
+        /** ProjectAssetOut */
+        ProjectAssetOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Original Filename */
+            original_filename: string;
+            /** Media Type */
+            media_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Sha256 */
+            sha256: string;
+            status: components["schemas"]["ProjectAssetStatus"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * ProjectAssetStatus
+         * @enum {string}
+         */
+        ProjectAssetStatus: "READY" | "DELETED";
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
@@ -471,6 +552,8 @@ export interface components {
             duration_seconds: number;
             /** Aspect Ratio */
             aspect_ratio: string;
+            /** References */
+            references?: components["schemas"]["ShotReferenceOut"][];
             /**
              * Created At
              * Format: date-time
@@ -481,6 +564,36 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** ShotReferenceCreate */
+        ShotReferenceCreate: {
+            /**
+             * Asset Id
+             * Format: uuid
+             */
+            asset_id: string;
+            /** Reference Role */
+            reference_role: string;
+        };
+        /** ShotReferenceOut */
+        ShotReferenceOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Asset Id
+             * Format: uuid
+             */
+            asset_id: string;
+            /** Reference Role */
+            reference_role: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** ShotUpdate */
         ShotUpdate: {
@@ -803,6 +916,71 @@ export interface operations {
             };
         };
     };
+    create_shot_reference_v1_shots__shot_id__references_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shot_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShotReferenceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShotReferenceOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_shot_reference_v1_shots__shot_id__references__reference_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shot_id: string;
+                reference_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     upload_asset_v1_uploads_post: {
         parameters: {
             query?: never;
@@ -822,7 +1000,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AssetOut"];
+                    "application/json": components["schemas"]["ProjectAssetOut"];
                 };
             };
             /** @description Validation Error */
@@ -857,7 +1035,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AssetOut"];
+                    "application/json": components["schemas"]["ProjectAssetOut"];
                 };
             };
             /** @description Validation Error */
@@ -921,7 +1099,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobOut"];
+                    "application/json": components["schemas"]["GenerationJobOut"];
                 };
             };
             /** @description Validation Error */
@@ -952,7 +1130,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobOut"];
+                    "application/json": components["schemas"]["GenerationJobOut"];
                 };
             };
             /** @description Validation Error */
@@ -983,7 +1161,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobOut"];
+                    "application/json": components["schemas"]["GenerationJobOut"];
                 };
             };
             /** @description Validation Error */
@@ -1012,7 +1190,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobList"];
+                    "application/json": components["schemas"]["GenerationJobList"];
                 };
             };
         };

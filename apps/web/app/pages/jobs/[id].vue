@@ -10,7 +10,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 
 const load = async () => {
   job.value = await api.request<Job>(`/v1/generations/${route.params.id}`)
-  const output = job.value.outputs?.[0]
+  const output = job.value.outputs?.find(item => item.id === job.value?.final_output_id)
   if (job.value.status === 'SUCCEEDED' && output && !videoUrl.value) {
     videoUrl.value = await api.download(`/v1/outputs/${output.id}/content`)
   }
@@ -36,7 +36,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (videoUrl.value) URL.
         <h2>结果</h2>
         <video v-if="videoUrl" :src="videoUrl" controls />
         <div v-else-if="job.status === 'FAILED_FINAL'">
-          <p>{{ job.error_message }}</p><code>{{ job.error_code }}</code>
+          <p>{{ job.error_message }}</p><code>{{ job.failure_code }}</code>
         </div>
         <p v-else-if="job.status === 'CANCELLED'" class="muted">任务已取消，不会产生输出。</p>
         <p v-else class="muted">正在等待 Mock Provider…</p>

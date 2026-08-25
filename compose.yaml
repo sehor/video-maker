@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:17.6-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-video_factory}
       POSTGRES_USER: ${POSTGRES_USER:-video_factory}

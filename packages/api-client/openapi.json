@@ -439,6 +439,109 @@
         }
       }
     },
+    "/v1/shots/{shot_id}/references": {
+      "post": {
+        "summary": "Create Shot Reference",
+        "operationId": "create_shot_reference_v1_shots__shot_id__references_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Shot Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShotReferenceCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShotReferenceOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/shots/{shot_id}/references/{reference_id}": {
+      "delete": {
+        "summary": "Delete Shot Reference",
+        "operationId": "delete_shot_reference_v1_shots__shot_id__references__reference_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Shot Id"
+            }
+          },
+          {
+            "name": "reference_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Reference Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/uploads": {
       "post": {
         "summary": "Upload Asset",
@@ -459,7 +562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssetOut"
+                  "$ref": "#/components/schemas/ProjectAssetOut"
                 }
               }
             }
@@ -519,7 +622,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssetOut"
+                  "$ref": "#/components/schemas/ProjectAssetOut"
                 }
               }
             }
@@ -600,7 +703,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobOut"
+                  "$ref": "#/components/schemas/GenerationJobOut"
                 }
               }
             }
@@ -650,7 +753,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobOut"
+                  "$ref": "#/components/schemas/GenerationJobOut"
                 }
               }
             }
@@ -695,7 +798,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobOut"
+                  "$ref": "#/components/schemas/GenerationJobOut"
                 }
               }
             }
@@ -723,7 +826,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobList"
+                  "$ref": "#/components/schemas/GenerationJobList"
                 }
               }
             }
@@ -782,92 +885,20 @@
   },
   "components": {
     "schemas": {
-      "AssetOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "project_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Project Id"
-          },
-          "original_filename": {
-            "type": "string",
-            "title": "Original Filename"
-          },
-          "mime_type": {
-            "type": "string",
-            "title": "Mime Type"
-          },
-          "size_bytes": {
-            "type": "integer",
-            "title": "Size Bytes"
-          },
-          "sha256": {
-            "type": "string",
-            "title": "Sha256"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "project_id",
-          "original_filename",
-          "mime_type",
-          "size_bytes",
-          "sha256",
-          "created_at"
+      "AttemptStatus": {
+        "type": "string",
+        "enum": [
+          "CREATED",
+          "SUBMITTING",
+          "SUBMITTED",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED_RETRYABLE",
+          "FAILED_FINAL",
+          "CANCELLED",
+          "TIMED_OUT"
         ],
-        "title": "AssetOut"
-      },
-      "AttemptOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "number": {
-            "type": "integer",
-            "title": "Number"
-          },
-          "provider": {
-            "type": "string",
-            "title": "Provider"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "provider_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider Job Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "number",
-          "provider",
-          "status",
-          "provider_job_id"
-        ],
-        "title": "AttemptOut"
+        "title": "AttemptStatus"
       },
       "Body_upload_asset_v1_uploads_post": {
         "properties": {
@@ -903,6 +934,63 @@
         ],
         "title": "Body_upload_project_asset_v1_projects__project_id__assets_post"
       },
+      "GenerationAttemptOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "title": "Attempt No"
+          },
+          "provider_code": {
+            "type": "string",
+            "title": "Provider Code"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AttemptStatus"
+          },
+          "provider_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Job Id"
+          },
+          "workflow_version": {
+            "type": "string",
+            "title": "Workflow Version"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "attempt_no",
+          "provider_code",
+          "status",
+          "provider_job_id",
+          "workflow_version",
+          "failure_code"
+        ],
+        "title": "GenerationAttemptOut"
+      },
       "GenerationCreate": {
         "properties": {
           "shot_id": {
@@ -930,6 +1018,262 @@
         ],
         "title": "GenerationCreate"
       },
+      "GenerationJobList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationJobOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "GenerationJobList"
+      },
+      "GenerationJobOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "shot_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Shot Id"
+          },
+          "tier_code": {
+            "type": "string",
+            "title": "Tier Code"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "title": "Duration Ms"
+          },
+          "resolution": {
+            "type": "string",
+            "title": "Resolution"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "title": "Aspect Ratio"
+          },
+          "variant_index": {
+            "type": "integer",
+            "title": "Variant Index"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "final_output_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Output Id"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "mock_mode": {
+            "type": "string",
+            "title": "Mock Mode"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationAttemptOut"
+            },
+            "type": "array",
+            "title": "Attempts"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationOutputOut"
+            },
+            "type": "array",
+            "title": "Outputs"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/JobEventOut"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "shot_id",
+          "tier_code",
+          "duration_ms",
+          "resolution",
+          "aspect_ratio",
+          "variant_index",
+          "status",
+          "final_output_id",
+          "failure_code",
+          "error_message",
+          "mock_mode",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GenerationJobOut"
+      },
+      "GenerationOutputOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Attempt Id"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fps"
+          },
+          "codec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Codec"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256"
+          },
+          "validation_status": {
+            "$ref": "#/components/schemas/OutputValidationStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "attempt_id",
+          "media_type",
+          "duration_ms",
+          "width",
+          "height",
+          "fps",
+          "codec",
+          "size_bytes",
+          "sha256",
+          "validation_status"
+        ],
+        "title": "GenerationOutputOut"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -949,6 +1293,18 @@
             "type": "string",
             "format": "uuid",
             "title": "Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
           },
           "event_type": {
             "type": "string",
@@ -978,6 +1334,7 @@
         "type": "object",
         "required": [
           "id",
+          "attempt_id",
           "event_type",
           "from_status",
           "to_status",
@@ -985,34 +1342,35 @@
         ],
         "title": "JobEventOut"
       },
-      "JobList": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/JobOut"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items"
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "CREATED",
+          "RESERVED",
+          "QUEUED",
+          "ROUTING",
+          "SUBMITTED",
+          "RUNNING",
+          "POSTPROCESSING",
+          "VALIDATING",
+          "SUCCEEDED",
+          "FAILED_FINAL",
+          "CANCELLED",
+          "EXPIRED",
+          "REJECTED_POLICY"
         ],
-        "title": "JobList"
+        "title": "JobStatus"
       },
-      "JobOut": {
+      "OutputValidationStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "VALID",
+          "INVALID"
+        ],
+        "title": "OutputValidationStatus"
+      },
+      "ProjectAssetOut": {
         "properties": {
           "id": {
             "type": "string",
@@ -1024,108 +1382,13 @@
             "format": "uuid",
             "title": "Project Id"
           },
-          "shot_id": {
+          "original_filename": {
             "type": "string",
-            "format": "uuid",
-            "title": "Shot Id"
+            "title": "Original Filename"
           },
-          "status": {
-            "$ref": "#/components/schemas/JobStatus"
-          },
-          "mock_mode": {
+          "media_type": {
             "type": "string",
-            "title": "Mock Mode"
-          },
-          "error_code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Code"
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "attempts": {
-            "items": {
-              "$ref": "#/components/schemas/AttemptOut"
-            },
-            "type": "array",
-            "title": "Attempts"
-          },
-          "outputs": {
-            "items": {
-              "$ref": "#/components/schemas/OutputOut"
-            },
-            "type": "array",
-            "title": "Outputs"
-          },
-          "events": {
-            "items": {
-              "$ref": "#/components/schemas/JobEventOut"
-            },
-            "type": "array",
-            "title": "Events"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "project_id",
-          "shot_id",
-          "status",
-          "mock_mode",
-          "error_code",
-          "error_message",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "JobOut"
-      },
-      "JobStatus": {
-        "type": "string",
-        "enum": [
-          "CREATED",
-          "QUEUED",
-          "RUNNING",
-          "SUCCEEDED",
-          "FAILED_FINAL",
-          "CANCELLED"
-        ],
-        "title": "JobStatus"
-      },
-      "OutputOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "mime_type": {
-            "type": "string",
-            "title": "Mime Type"
+            "title": "Media Type"
           },
           "size_bytes": {
             "type": "integer",
@@ -1135,20 +1398,35 @@
             "type": "string",
             "title": "Sha256"
           },
-          "is_valid": {
-            "type": "boolean",
-            "title": "Is Valid"
+          "status": {
+            "$ref": "#/components/schemas/ProjectAssetStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "mime_type",
+          "project_id",
+          "original_filename",
+          "media_type",
           "size_bytes",
           "sha256",
-          "is_valid"
+          "status",
+          "created_at"
         ],
-        "title": "OutputOut"
+        "title": "ProjectAssetOut"
+      },
+      "ProjectAssetStatus": {
+        "type": "string",
+        "enum": [
+          "READY",
+          "DELETED"
+        ],
+        "title": "ProjectAssetStatus"
       },
       "ProjectCreate": {
         "properties": {
@@ -1371,6 +1649,13 @@
             "type": "string",
             "title": "Aspect Ratio"
           },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/ShotReferenceOut"
+            },
+            "type": "array",
+            "title": "References"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -1394,6 +1679,59 @@
           "updated_at"
         ],
         "title": "ShotOut"
+      },
+      "ShotReferenceCreate": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Asset Id"
+          },
+          "reference_role": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "title": "Reference Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "reference_role"
+        ],
+        "title": "ShotReferenceCreate"
+      },
+      "ShotReferenceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Asset Id"
+          },
+          "reference_role": {
+            "type": "string",
+            "title": "Reference Role"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "asset_id",
+          "reference_role",
+          "created_at"
+        ],
+        "title": "ShotReferenceOut"
       },
       "ShotUpdate": {
         "properties": {
