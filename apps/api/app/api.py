@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.auth import CurrentUser
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.errors import ApiError, not_found
+from app.idempotency import acquire, complete, replay_result_id
 from app.ledger import (
     create_quote,
     finish_reservation,
@@ -33,11 +34,13 @@ from app.models import (
     Project,
     ProjectAsset,
     ProjectAssetStatus,
+    Quote,
     SettlementStatus,
     Shot,
     ShotReference,
 )
-from app.provider import MockVideoProvider, transition
+from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
+from app.provider import MockVideoProvider
 from app.schemas import (
     GenerationCreate,
     GenerationJobList,
@@ -60,14 +63,22 @@ from app.schemas import (
     TestGrantCreate,
     WalletOut,
 )
+from app.state_machine import transition_attempt, transition_job
 from app.storage import LocalObjectStorage
+from app.workflow import MockWorkflowStarter
 
 router = APIRouter(prefix="/v1")
 Db = Annotated[Session, Depends(get_db)]
+IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 
 
 def storage() -> LocalObjectStorage:
     return LocalObjectStorage(get_settings().storage_root)
+
+
+async def dispatch_generation_outbox() -> DispatchResult:
+    starter = MockWorkflowStarter(MockVideoProvider(storage()))
+    return await OutboxDispatcher(SessionLocal, starter).dispatch_once()
 
 
 def encode_cursor(created_at: str, item_id: uuid.UUID) -> str:
@@ -341,12 +352,48 @@ def load_job(db: Session, job_id: uuid.UUID, owner_id: uuid.UUID) -> GenerationJ
     return job
 
 
+def load_quote(db: Session, quote_id: uuid.UUID, owner_id: uuid.UUID) -> Quote:
+    quote = db.scalar(select(Quote).where(Quote.id == quote_id, Quote.user_id == owner_id))
+    if quote is None:
+        raise ApiError(500, "IDEMPOTENCY_RESULT_INVALID", "幂等请求结果记录无效")
+    return quote
+
+
+def load_ledger_transaction(
+    db: Session, transaction_id: uuid.UUID, owner_id: uuid.UUID
+) -> LedgerTransaction:
+    transaction = db.scalar(
+        select(LedgerTransaction)
+        .join(LedgerPosting)
+        .join(LedgerAccount, LedgerAccount.id == LedgerPosting.account_id)
+        .where(
+            LedgerTransaction.id == transaction_id,
+            LedgerAccount.owner_id == owner_id,
+        )
+        .options(selectinload(LedgerTransaction.postings))
+    )
+    if transaction is None:
+        raise ApiError(500, "IDEMPOTENCY_RESULT_INVALID", "幂等请求结果记录无效")
+    return transaction
+
+
 @router.post("/quotes", response_model=QuoteOut, status_code=201)
 def create_generation_quote(
     payload: QuoteCreate,
     user: CurrentUser,
     db: Db,
+    idempotency_key: IdempotencyKey = None,
 ):
+    decision = acquire(
+        db,
+        user_id=user.id,
+        scope="POST:/v1/quotes",
+        key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    replay_id = replay_result_id(decision, "generation_quote")
+    if replay_id is not None:
+        return load_quote(db, replay_id, user.id)
     shot = owned_shot(db, payload.shot_id, user.id)
     quote = create_quote(
         db,
@@ -355,6 +402,13 @@ def create_generation_quote(
         tier_code=payload.tier,
         resolution=payload.resolution,
         variant_count=payload.variant_count,
+    )
+    complete(
+        db,
+        decision.record,
+        result_type="generation_quote",
+        result_id=quote.id,
+        response_status=201,
     )
     db.commit()
     db.refresh(quote)
@@ -366,9 +420,20 @@ def create_test_grant(
     payload: TestGrantCreate,
     user: CurrentUser,
     db: Db,
+    idempotency_key: IdempotencyKey = None,
 ) -> LedgerTransaction:
     if get_settings().environment == "production":
         raise not_found("endpoint")
+    decision = acquire(
+        db,
+        user_id=user.id,
+        scope="POST:/v1/wallet/test-grants",
+        key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    replay_id = replay_result_id(decision, "ledger_transaction")
+    if replay_id is not None:
+        return load_ledger_transaction(db, replay_id, user.id)
     transaction = grant_seconds(
         db,
         user,
@@ -377,12 +442,15 @@ def create_test_grant(
         idempotency_key=payload.idempotency_key,
         reason=payload.reason,
     )
-    db.commit()
-    return db.scalar(
-        select(LedgerTransaction)
-        .where(LedgerTransaction.id == transaction.id)
-        .options(selectinload(LedgerTransaction.postings))
+    complete(
+        db,
+        decision.record,
+        result_type="ledger_transaction",
+        result_id=transaction.id,
+        response_status=201,
     )
+    db.commit()
+    return load_ledger_transaction(db, transaction.id, user.id)
 
 
 @router.get("/wallet", response_model=WalletOut)
@@ -417,7 +485,19 @@ def generate(
     background: BackgroundTasks,
     user: CurrentUser,
     db: Db,
+    idempotency_key: IdempotencyKey = None,
 ) -> GenerationJob:
+    decision = acquire(
+        db,
+        user_id=user.id,
+        scope="POST:/v1/generations",
+        key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    replay_id = replay_result_id(decision, "generation_job")
+    if replay_id is not None:
+        background.add_task(dispatch_generation_outbox)
+        return load_job(db, replay_id, user.id)
     shot = db.scalar(
         select(Shot).join(Project).where(Shot.id == payload.shot_id, Project.owner_id == user.id)
     )
@@ -447,9 +527,20 @@ def generate(
         status=AttemptStatus.CREATED,
     )
     db.add(attempt)
-    transition(db, job, JobStatus.QUEUED, "job.queued", f"{job.id}:queued")
+    if not transition_job(
+        db, job, JobStatus.QUEUED, "job.queued", f"job:{job.id}:queued:v1"
+    ):
+        raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+    enqueue_generation_workflow(db, job)
+    complete(
+        db,
+        decision.record,
+        result_type="generation_job",
+        result_id=job.id,
+        response_status=202,
+    )
     db.commit()
-    background.add_task(MockVideoProvider(storage()).submit, job.id)
+    background.add_task(dispatch_generation_outbox)
     return load_job(db, job.id, user.id)
 
 
@@ -459,18 +550,55 @@ def get_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJo
 
 
 @router.post("/generations/{job_id}/cancel", response_model=GenerationJobOut)
-def cancel_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJob:
+def cancel_generation(
+    job_id: uuid.UUID,
+    user: CurrentUser,
+    db: Db,
+    idempotency_key: IdempotencyKey = None,
+) -> GenerationJob:
+    decision = acquire(
+        db,
+        user_id=user.id,
+        scope="POST:/v1/generations/{job_id}/cancel",
+        key=idempotency_key,
+        payload={"job_id": str(job_id)},
+    )
+    replay_id = replay_result_id(decision, "generation_job")
+    if replay_id is not None:
+        return load_job(db, replay_id, user.id)
     job = load_job(db, job_id, user.id)
     if job.status not in {JobStatus.CREATED, JobStatus.RESERVED, JobStatus.QUEUED}:
         raise ApiError(409, "JOB_NOT_CANCELLABLE", "当前任务状态不能取消")
-    if transition(db, job, JobStatus.CANCELLED, "job.cancelled", f"{job.id}:cancelled"):
-        job.finished_at = datetime.now(UTC)
-        for attempt in job.attempts:
-            if attempt.status in {AttemptStatus.CREATED, AttemptStatus.RUNNING}:
-                attempt.status = AttemptStatus.CANCELLED
-        if job.settlement_status == SettlementStatus.RESERVED:
-            finish_reservation(db, job, settle=False)
-        db.commit()
+    if not transition_job(
+        db, job, JobStatus.CANCELLED, "job.cancelled", f"job:{job.id}:cancelled:v1"
+    ):
+        raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+    job.finished_at = datetime.now(UTC)
+    for attempt in job.attempts:
+        if attempt.status not in {
+            AttemptStatus.SUCCEEDED,
+            AttemptStatus.FAILED_RETRYABLE,
+            AttemptStatus.FAILED_FINAL,
+            AttemptStatus.CANCELLED,
+            AttemptStatus.TIMED_OUT,
+        } and not transition_attempt(
+            db,
+            attempt,
+            AttemptStatus.CANCELLED,
+            "attempt.cancelled",
+            f"attempt:{attempt.id}:cancelled:v1",
+        ):
+            raise ApiError(409, "ATTEMPT_STATE_CONFLICT", "任务尝试状态已变化")
+    if job.settlement_status == SettlementStatus.RESERVED:
+        finish_reservation(db, job, settle=False)
+    complete(
+        db,
+        decision.record,
+        result_type="generation_job",
+        result_id=job.id,
+        response_status=200,
+    )
+    db.commit()
     return load_job(db, job.id, user.id)
 
 

@@ -1321,7 +1321,9 @@ export interface operations {
     create_generation_quote_v1_quotes_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1354,7 +1356,9 @@ export interface operations {
     create_test_grant_v1_wallet_test_grants_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1438,7 +1442,9 @@ export interface operations {
     generate_v1_generations_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1502,7 +1508,9 @@ export interface operations {
     cancel_generation_v1_generations__job_id__cancel_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 job_id: string;
             };

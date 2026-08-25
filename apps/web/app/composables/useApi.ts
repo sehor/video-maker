@@ -8,6 +8,9 @@ export const useApi = () => {
     const token = await accessToken()
     const headers = new Headers(options.headers)
     headers.set('Authorization', `Bearer ${token}`)
+    if (options.method && options.method !== 'GET' && !headers.has('Idempotency-Key')) {
+      headers.set('Idempotency-Key', crypto.randomUUID())
+    }
     if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json')
     const response = await fetch(`${config.public.apiBase}${path}`, { ...options, headers })
     if (!response.ok) {

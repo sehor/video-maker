@@ -1,6 +1,9 @@
+import asyncio
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI, Request
@@ -9,9 +12,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import router
+from app.api import dispatch_generation_outbox, router
 from app.config import get_settings
 from app.errors import ApiError
+from app.outbox import DispatchResult
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 structlog.configure(
@@ -25,17 +29,51 @@ structlog.configure(
 logger = structlog.get_logger()
 settings = get_settings()
 
+
+async def outbox_dispatcher_loop(stop: asyncio.Event) -> None:
+    logger.info("outbox.dispatcher_started")
+    while not stop.is_set():
+        try:
+            result = await dispatch_generation_outbox()
+        except Exception as exc:
+            logger.exception("outbox.dispatcher_failed", error_type=type(exc).__name__)
+            result = None
+        if result == DispatchResult.PUBLISHED:
+            continue
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.outbox_poll_interval_seconds)
+        except TimeoutError:
+            pass
+    logger.info("outbox.dispatcher_stopped")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    stop = asyncio.Event()
+    task = (
+        asyncio.create_task(outbox_dispatcher_loop(stop))
+        if settings.outbox_dispatcher_enabled
+        else None
+    )
+    try:
+        yield
+    finally:
+        if task is not None:
+            stop.set()
+            await task
+
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     docs_url="/docs" if settings.environment != "production" else None,
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
 )
 
 

@@ -9,7 +9,6 @@ from app.errors import ApiError, not_found
 from app.models import (
     AppUser,
     GenerationJob,
-    JobEvent,
     JobStatus,
     LedgerAccount,
     LedgerPosting,
@@ -22,6 +21,7 @@ from app.models import (
     Shot,
     WalletBalance,
 )
+from app.state_machine import transition_job
 
 USER_AVAILABLE = "USER_AVAILABLE"
 USER_RESERVED = "USER_RESERVED"
@@ -477,17 +477,15 @@ def reserve_quote_for_job(
     job.reserved_amount_ms = quote.reserved_ms
     job.reserved_tx_id = transaction.id
     job.settlement_status = SettlementStatus.RESERVED
-    job.status = JobStatus.RESERVED
-    db.add(
-        JobEvent(
-            job_id=job.id,
-            event_type="job.reserved",
-            from_status=JobStatus.CREATED.value,
-            to_status=JobStatus.RESERVED.value,
-            dedup_key=f"job:{job.id}:reserved:v1",
-            payload_json={"ledger_transaction_id": str(transaction.id)},
-        )
-    )
+    if not transition_job(
+        db,
+        job,
+        JobStatus.RESERVED,
+        "job.reserved",
+        f"job:{job.id}:reserved:v1",
+        {"ledger_transaction_id": str(transaction.id)},
+    ):
+        raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
     db.flush()
 
 

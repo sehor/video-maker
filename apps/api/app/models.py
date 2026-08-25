@@ -12,6 +12,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     Numeric,
     String,
@@ -64,6 +65,17 @@ class SettlementStatus(str, enum.Enum):
     RELEASED = "RELEASED"
 
 
+class ApiIdempotencyStatus(str, enum.Enum):
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+
+
+class OutboxStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    PUBLISHED = "PUBLISHED"
+
+
 class ProjectAssetStatus(str, enum.Enum):
     READY = "READY"
     DELETED = "DELETED"
@@ -89,6 +101,34 @@ class AppUser(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     auth_subject: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+
+
+class ApiIdempotencyRecord(Base, TimestampMixin):
+    __tablename__ = "api_idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "scope",
+            "idempotency_key",
+            name="uq_api_idempotency_user_scope_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[ApiIdempotencyStatus] = mapped_column(
+        Enum(ApiIdempotencyStatus, native_enum=False, length=16),
+        default=ApiIdempotencyStatus.IN_PROGRESS,
+        nullable=False,
+    )
+    result_type: Mapped[str | None] = mapped_column(String(64))
+    result_id: Mapped[uuid.UUID | None] = mapped_column()
+    response_status: Mapped[int | None] = mapped_column(Integer)
 
 
 class Project(Base, TimestampMixin):
@@ -468,6 +508,51 @@ class GenerationJob(Base, TimestampMixin):
     events: Mapped[list["JobEvent"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="JobEvent.created_at"
     )
+    outbox_events: Mapped[list["OutboxEvent"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class OutboxEvent(Base, TimestampMixin):
+    __tablename__ = "outbox_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "event_type", name="uq_outbox_events_job_event"),
+        UniqueConstraint("idempotency_key", name="uq_outbox_events_idempotency_key"),
+        CheckConstraint("attempt_count >= 0", name="ck_outbox_events_attempt_count"),
+        CheckConstraint(
+            "status != 'PROCESSING' OR (locked_at IS NOT NULL AND lock_token IS NOT NULL)",
+            name="ck_outbox_events_processing_lease",
+        ),
+        CheckConstraint(
+            "status != 'PUBLISHED' OR published_at IS NOT NULL",
+            name="ck_outbox_events_published_at",
+        ),
+        Index("ix_outbox_events_dispatchable", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generation_jobs.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[OutboxStatus] = mapped_column(
+        Enum(OutboxStatus, native_enum=False, length=16),
+        default=OutboxStatus.PENDING,
+        nullable=False,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lock_token: Mapped[str | None] = mapped_column(String(36))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    workflow_id: Mapped[str | None] = mapped_column(String(255))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    job: Mapped[GenerationJob] = relationship(back_populates="outbox_events")
 
 
 class GenerationAttempt(Base, TimestampMixin):

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.ledger import finish_reservation
@@ -14,13 +13,16 @@ from app.models import (
     GenerationAttempt,
     GenerationJob,
     GenerationOutput,
-    JobEvent,
     JobStatus,
     OutputValidationStatus,
 )
+from app.state_machine import transition_attempt, transition_job
 from app.storage import LocalObjectStorage
 
 MOCK_VIDEO_FIXTURE = Path(__file__).with_name("fixtures") / "mock-success.mp4"
+
+# Backward-compatible module alias for existing internal callers.
+transition = transition_job
 
 
 class VideoProvider(Protocol):
@@ -29,42 +31,6 @@ class VideoProvider(Protocol):
     async def poll(self, provider_job_id: str) -> str: ...
 
     async def cancel(self, provider_job_id: str) -> None: ...
-
-
-ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
-    JobStatus.CREATED: {JobStatus.RESERVED, JobStatus.CANCELLED},
-    JobStatus.RESERVED: {JobStatus.QUEUED, JobStatus.CANCELLED},
-    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED},
-    JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED_FINAL, JobStatus.CANCELLED},
-    JobStatus.SUCCEEDED: set(),
-    JobStatus.FAILED_FINAL: set(),
-    JobStatus.CANCELLED: set(),
-}
-
-
-def transition(
-    db: Session,
-    job: GenerationJob,
-    to_status: JobStatus,
-    event_type: str,
-    dedup_key: str,
-) -> bool:
-    if db.scalar(select(JobEvent.id).where(JobEvent.dedup_key == dedup_key)):
-        return False
-    if to_status not in ALLOWED_TRANSITIONS[job.status]:
-        return False
-    from_status = job.status
-    job.status = to_status
-    db.add(
-        JobEvent(
-            job_id=job.id,
-            event_type=event_type,
-            from_status=from_status.value,
-            to_status=to_status.value,
-            dedup_key=dedup_key,
-        )
-    )
-    return True
 
 
 class MockVideoProvider:
@@ -81,8 +47,50 @@ class MockVideoProvider:
             if attempt is None:
                 return
             attempt.provider_job_id = provider_id
-            transition(db, job, JobStatus.RUNNING, "provider.started", f"{provider_id}:running")
-            attempt.status = AttemptStatus.RUNNING
+            if not (
+                transition_job(
+                    db, job, JobStatus.ROUTING, "job.routing", f"job:{job.id}:routing:v1"
+                )
+                and transition_attempt(
+                    db,
+                    attempt,
+                    AttemptStatus.SUBMITTING,
+                    "attempt.submitting",
+                    f"attempt:{attempt.id}:submitting:v1",
+                )
+                and transition_job(
+                    db,
+                    job,
+                    JobStatus.SUBMITTED,
+                    "provider.submitted",
+                    f"attempt:{attempt.id}:job-submitted:v1",
+                    {"provider_job_id": provider_id},
+                )
+                and transition_attempt(
+                    db,
+                    attempt,
+                    AttemptStatus.SUBMITTED,
+                    "attempt.submitted",
+                    f"attempt:{attempt.id}:submitted:v1",
+                    {"provider_job_id": provider_id},
+                )
+                and transition_job(
+                    db,
+                    job,
+                    JobStatus.RUNNING,
+                    "provider.started",
+                    f"attempt:{attempt.id}:job-running:v1",
+                )
+                and transition_attempt(
+                    db,
+                    attempt,
+                    AttemptStatus.RUNNING,
+                    "attempt.running",
+                    f"attempt:{attempt.id}:running:v1",
+                )
+            ):
+                db.rollback()
+                return
             attempt.started_at = datetime.now(UTC)
             job.started_at = datetime.now(UTC)
             db.commit()
@@ -125,21 +133,28 @@ class MockVideoProvider:
             attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
             if job is None or attempt is None or job.status == JobStatus.CANCELLED:
                 return
-            if transition(
+            attempt_status = (
+                AttemptStatus.TIMED_OUT if code == "MOCK_TIMEOUT" else AttemptStatus.FAILED_FINAL
+            )
+            if transition_job(
                 db, job, JobStatus.FAILED_FINAL, "provider.failed", f"{provider_id}:failed"
+            ) and transition_attempt(
+                db,
+                attempt,
+                attempt_status,
+                "attempt.failed",
+                f"{provider_id}:attempt-failed",
+                {"failure_code": code},
             ):
                 job.failure_code = code
                 job.error_message = message
                 job.finished_at = datetime.now(UTC)
                 attempt.failure_code = code
                 attempt.finished_at = datetime.now(UTC)
-                attempt.status = (
-                    AttemptStatus.TIMED_OUT
-                    if code == "MOCK_TIMEOUT"
-                    else AttemptStatus.FAILED_FINAL
-                )
                 finish_reservation(db, job, settle=False)
                 db.commit()
+            else:
+                db.rollback()
 
     def _finish_corrupt(self, job_id: uuid.UUID, provider_id: str) -> None:
         stored = self.storage.write_bytes("outputs", b"not-an-mp4", "video/mp4")
@@ -147,6 +162,15 @@ class MockVideoProvider:
             job = db.get(GenerationJob, job_id)
             attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
             if job is None or attempt is None or job.status == JobStatus.CANCELLED:
+                self.storage.delete(stored.key)
+                return
+            if not transition_job(
+                db,
+                job,
+                JobStatus.POSTPROCESSING,
+                "output.postprocessing",
+                f"{provider_id}:postprocessing",
+            ):
                 self.storage.delete(stored.key)
                 return
             db.add(
@@ -160,13 +184,34 @@ class MockVideoProvider:
                     validation_status=OutputValidationStatus.INVALID,
                 )
             )
-            transition(db, job, JobStatus.FAILED_FINAL, "output.invalid", f"{provider_id}:corrupt")
+            if not transition_job(
+                db,
+                job,
+                JobStatus.VALIDATING,
+                "output.validating",
+                f"{provider_id}:validating",
+            ) or not transition_job(
+                db,
+                job,
+                JobStatus.FAILED_FINAL,
+                "output.invalid",
+                f"{provider_id}:corrupt",
+            ) or not transition_attempt(
+                db,
+                attempt,
+                AttemptStatus.FAILED_FINAL,
+                "attempt.failed",
+                f"{provider_id}:attempt-corrupt",
+                {"failure_code": "OUTPUT_INVALID_MP4"},
+            ):
+                db.rollback()
+                self.storage.delete(stored.key)
+                return
             job.failure_code = "OUTPUT_INVALID_MP4"
             job.error_message = "Provider 输出不是有效 MP4"
             job.finished_at = datetime.now(UTC)
             attempt.failure_code = "OUTPUT_INVALID_MP4"
             attempt.finished_at = datetime.now(UTC)
-            attempt.status = AttemptStatus.FAILED_FINAL
             finish_reservation(db, job, settle=False)
             db.commit()
 
@@ -176,8 +221,13 @@ class MockVideoProvider:
             attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
             if job is None or attempt is None or job.status != JobStatus.RUNNING:
                 return
-            dedup_key = f"{provider_id}:completed"
-            if db.scalar(select(JobEvent.id).where(JobEvent.dedup_key == dedup_key)):
+            if not transition_job(
+                db,
+                job,
+                JobStatus.POSTPROCESSING,
+                "output.postprocessing",
+                f"{provider_id}:postprocessing",
+            ):
                 return
             stored = self.storage.write_bytes("outputs", content, "video/mp4")
             output = GenerationOutput(
@@ -197,9 +247,31 @@ class MockVideoProvider:
             db.add(output)
             db.flush()
             job.final_output_id = output.id
-            transition(db, job, JobStatus.SUCCEEDED, "provider.completed", dedup_key)
+            if not transition_job(
+                db,
+                job,
+                JobStatus.VALIDATING,
+                "output.validating",
+                f"{provider_id}:validating",
+            ) or not transition_job(
+                db,
+                job,
+                JobStatus.SUCCEEDED,
+                "provider.completed",
+                f"{provider_id}:completed",
+                {"output_id": str(output.id)},
+            ) or not transition_attempt(
+                db,
+                attempt,
+                AttemptStatus.SUCCEEDED,
+                "attempt.succeeded",
+                f"{provider_id}:attempt-completed",
+                {"output_id": str(output.id)},
+            ):
+                db.rollback()
+                self.storage.delete(stored.key)
+                return
             job.finished_at = datetime.now(UTC)
-            attempt.status = AttemptStatus.SUCCEEDED
             attempt.finished_at = datetime.now(UTC)
             finish_reservation(db, job, settle=True)
             db.commit()

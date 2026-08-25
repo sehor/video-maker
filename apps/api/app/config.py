@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     auth_audience: str = "video-factory-api"
     storage_root: Path = Path("./data/storage")
     max_upload_bytes: int = 50 * 1024 * 1024
+    outbox_dispatcher_enabled: bool = True
+    outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
