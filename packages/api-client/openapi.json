@@ -936,6 +936,112 @@
         }
       }
     },
+    "/v1/batches": {
+      "post": {
+        "summary": "Create Batch",
+        "operationId": "create_batch_v1_batches_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationBatchOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/batches/{batch_id}": {
+      "get": {
+        "summary": "Get Batch",
+        "operationId": "get_batch_v1_batches__batch_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "batch_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Batch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationBatchOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/generations/{job_id}": {
       "get": {
         "summary": "Get Generation",
@@ -1165,6 +1271,62 @@
         ],
         "title": "AttemptStatus"
       },
+      "BatchCreate": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchItemCreate"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "BatchCreate"
+      },
+      "BatchItemCreate": {
+        "properties": {
+          "quote_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Quote Id"
+          },
+          "mock_mode": {
+            "type": "string",
+            "enum": [
+              "success",
+              "delayed",
+              "failure",
+              "timeout",
+              "duplicate",
+              "corrupt"
+            ],
+            "title": "Mock Mode",
+            "default": "success"
+          }
+        },
+        "type": "object",
+        "required": [
+          "quote_id"
+        ],
+        "title": "BatchItemCreate"
+      },
+      "BatchStatus": {
+        "type": "string",
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "SUCCEEDED",
+          "PARTIAL",
+          "FAILED_FINAL"
+        ],
+        "title": "BatchStatus"
+      },
       "Body_upload_asset_v1_uploads_post": {
         "properties": {
           "project_id": {
@@ -1255,6 +1417,59 @@
           "failure_code"
         ],
         "title": "GenerationAttemptOut"
+      },
+      "GenerationBatchOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BatchStatus"
+          },
+          "ledger_unit": {
+            "type": "string",
+            "title": "Ledger Unit"
+          },
+          "reserved_amount_ms": {
+            "type": "integer",
+            "title": "Reserved Amount Ms"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationJobOut"
+            },
+            "type": "array",
+            "title": "Jobs"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "status",
+          "ledger_unit",
+          "reserved_amount_ms",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GenerationBatchOut"
       },
       "GenerationCreate": {
         "properties": {

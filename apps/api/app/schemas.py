@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import (
     AttemptStatus,
+    BatchStatus,
     JobStatus,
     OutputValidationStatus,
     ProjectAssetStatus,
@@ -204,6 +205,25 @@ class GenerationCreate(BaseModel):
     )
 
 
+class BatchItemCreate(BaseModel):
+    quote_id: uuid.UUID
+    mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
+        "success"
+    )
+
+
+class BatchCreate(BaseModel):
+    items: list[BatchItemCreate] = Field(min_length=1, max_length=100)
+
+    @field_validator("items")
+    @classmethod
+    def require_unique_quotes(cls, items: list[BatchItemCreate]) -> list[BatchItemCreate]:
+        quote_ids = [item.quote_id for item in items]
+        if len(set(quote_ids)) != len(quote_ids):
+            raise ValueError("batch quote_id values must be unique")
+        return items
+
+
 class GenerationAttemptOut(OrmModel):
     id: uuid.UUID
     attempt_no: int
@@ -268,6 +288,17 @@ class GenerationJobOut(OrmModel):
 class GenerationJobList(BaseModel):
     items: list[GenerationJobOut]
     next_cursor: str | None = None
+
+
+class GenerationBatchOut(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: BatchStatus
+    ledger_unit: str
+    reserved_amount_ms: int
+    jobs: list[GenerationJobOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
 
 class ProviderWebhookAck(BaseModel):

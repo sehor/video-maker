@@ -247,6 +247,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Batch */
+        post: operations["create_batch_v1_batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Batch */
+        get: operations["get_batch_v1_batches__batch_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations/{job_id}": {
         parameters: {
             query?: never;
@@ -341,6 +375,30 @@ export interface components {
          * @enum {string}
          */
         AttemptStatus: "CREATED" | "SUBMITTING" | "SUBMITTED" | "RUNNING" | "SUCCEEDED" | "FAILED_RETRYABLE" | "FAILED_FINAL" | "CANCELLED" | "TIMED_OUT";
+        /** BatchCreate */
+        BatchCreate: {
+            /** Items */
+            items: components["schemas"]["BatchItemCreate"][];
+        };
+        /** BatchItemCreate */
+        BatchItemCreate: {
+            /**
+             * Quote Id
+             * Format: uuid
+             */
+            quote_id: string;
+            /**
+             * Mock Mode
+             * @default success
+             * @enum {string}
+             */
+            mock_mode: "success" | "delayed" | "failure" | "timeout" | "duplicate" | "corrupt";
+        };
+        /**
+         * BatchStatus
+         * @enum {string}
+         */
+        BatchStatus: "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL" | "FAILED_FINAL";
         /** Body_upload_asset_v1_uploads_post */
         Body_upload_asset_v1_uploads_post: {
             /**
@@ -380,6 +438,36 @@ export interface components {
             workflow_version: string;
             /** Failure Code */
             failure_code: string | null;
+        };
+        /** GenerationBatchOut */
+        GenerationBatchOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            status: components["schemas"]["BatchStatus"];
+            /** Ledger Unit */
+            ledger_unit: string;
+            /** Reserved Amount Ms */
+            reserved_amount_ms: number;
+            /** Jobs */
+            jobs?: components["schemas"]["GenerationJobOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** GenerationCreate */
         GenerationCreate: {
@@ -1489,6 +1577,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_batch_v1_batches_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationBatchOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_batch_v1_batches__batch_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationBatchOut"];
                 };
             };
             /** @description Validation Error */

@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.errors import ApiError, not_found
 from app.models import (
     AppUser,
+    BatchStatus,
+    GenerationBatch,
     GenerationJob,
     JobStatus,
     LedgerAccount,
@@ -21,7 +23,7 @@ from app.models import (
     Shot,
     WalletBalance,
 )
-from app.state_machine import transition_job
+from app.state_machine import JOB_TERMINAL_STATUSES, transition_job
 
 USER_AVAILABLE = "USER_AVAILABLE"
 USER_RESERVED = "USER_RESERVED"
@@ -410,6 +412,105 @@ def _quote_snapshot(db: Session, quote: Quote) -> dict[str, object]:
     }
 
 
+def _validate_quote_terms(
+    db: Session,
+    user: AppUser,
+    shot: Shot,
+    quote: Quote,
+    now: datetime,
+) -> None:
+    if quote.user_id != user.id or quote.project_id != shot.project_id or quote.shot_id != shot.id:
+        raise not_found("quote")
+    if quote.status != QuoteStatus.OPEN:
+        raise ApiError(409, "QUOTE_ALREADY_USED", "报价已使用")
+    if aware(quote.expires_at) <= now:
+        raise ApiError(409, "QUOTE_EXPIRED", "报价已过期")
+    if (
+        quote.duration_ms != shot.duration_seconds * 1000
+        or quote.aspect_ratio != shot.aspect_ratio
+    ):
+        raise ApiError(409, "QUOTE_PARAMETERS_CHANGED", "镜头参数已变化，请重新报价")
+    tier = db.get(QualityTier, quote.tier_code)
+    if tier is None or not tier.enabled or quote.resolution != "720P":
+        raise ApiError(422, "TIER_UNAVAILABLE", "该质量档或分辨率当前不可用")
+
+
+def reserve_quotes_for_batch(
+    db: Session,
+    user: AppUser,
+    batch: GenerationBatch,
+    quote_ids: list[uuid.UUID],
+) -> list[tuple[Quote, Shot, dict[str, object]]]:
+    quotes = list(
+        db.scalars(
+            select(Quote)
+            .where(Quote.id.in_(quote_ids), Quote.user_id == user.id)
+            .order_by(Quote.id)
+            .with_for_update()
+        )
+    )
+    by_id = {quote.id: quote for quote in quotes}
+    if len(by_id) != len(quote_ids):
+        raise not_found("quote")
+
+    now = utcnow()
+    claimed: list[tuple[Quote, Shot, dict[str, object]]] = []
+    project_id: uuid.UUID | None = None
+    billing_unit: str | None = None
+    for quote_id in quote_ids:
+        quote = by_id[quote_id]
+        shot = db.get(Shot, quote.shot_id)
+        if shot is None:
+            raise not_found("shot")
+        _validate_quote_terms(db, user, shot, quote, now)
+        if project_id is None:
+            project_id = quote.project_id
+        elif quote.project_id != project_id:
+            raise ApiError(422, "BATCH_PROJECT_MISMATCH", "Batch 中的报价必须属于同一项目")
+        if billing_unit is None:
+            billing_unit = quote.billing_unit
+        elif quote.billing_unit != billing_unit:
+            raise ApiError(422, "BATCH_LEDGER_UNIT_MISMATCH", "Batch 中的报价账本单位必须一致")
+        claimed.append((quote, shot, _quote_snapshot(db, quote)))
+
+    changed = db.execute(
+        update(Quote)
+        .where(
+            Quote.id.in_(quote_ids),
+            Quote.user_id == user.id,
+            Quote.status == QuoteStatus.OPEN,
+            Quote.expires_at > now,
+        )
+        .values(status=QuoteStatus.USED, used_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if changed.rowcount != len(quote_ids):
+        raise ApiError(409, "QUOTE_ALREADY_USED", "Batch 中的报价已使用或已过期")
+
+    assert project_id is not None and billing_unit is not None
+    total_reserved_ms = sum(quote.reserved_ms for quote, _, _ in claimed)
+    available = ensure_account(db, user.id, USER_AVAILABLE, billing_unit)
+    reserved = ensure_account(db, user.id, USER_RESERVED, billing_unit)
+    transaction, _ = post_transfer(
+        db,
+        tx_type="RESERVE",
+        idempotency_key=f"batch:{batch.id}:reserve:v1",
+        reference_type="batch",
+        reference_id=str(batch.id),
+        unit=billing_unit,
+        debit=available,
+        credit=reserved,
+        amount_ms=total_reserved_ms,
+    )
+    batch.project_id = project_id
+    batch.ledger_unit = billing_unit
+    batch.reserved_amount_ms = total_reserved_ms
+    batch.reserved_tx_id = transaction.id
+    db.add(batch)
+    db.flush()
+    return claimed
+
+
 def reserve_quote_for_job(
     db: Session,
     user: AppUser,
@@ -428,18 +529,7 @@ def reserve_quote_for_job(
     if quote is None:
         raise not_found("quote")
     now = utcnow()
-    if quote.status != QuoteStatus.OPEN:
-        raise ApiError(409, "QUOTE_ALREADY_USED", "报价已使用")
-    if aware(quote.expires_at) <= now:
-        raise ApiError(409, "QUOTE_EXPIRED", "报价已过期")
-    if (
-        quote.duration_ms != shot.duration_seconds * 1000
-        or quote.aspect_ratio != shot.aspect_ratio
-    ):
-        raise ApiError(409, "QUOTE_PARAMETERS_CHANGED", "镜头参数已变化，请重新报价")
-    tier = db.get(QualityTier, quote.tier_code)
-    if tier is None or not tier.enabled or quote.resolution != "720P":
-        raise ApiError(422, "TIER_UNAVAILABLE", "该质量档或分辨率当前不可用")
+    _validate_quote_terms(db, user, shot, quote, now)
 
     claimed = db.execute(
         update(Quote)
@@ -531,7 +621,32 @@ def finish_reservation(db: Session, job: GenerationJob, *, settle: bool) -> bool
         credit=target,
         amount_ms=job.reserved_amount_ms,
     )
+    if job.batch_id is not None:
+        refresh_batch_status(db, job.batch_id)
     return True
+
+
+def refresh_batch_status(db: Session, batch_id: uuid.UUID) -> BatchStatus:
+    batch = db.scalar(
+        select(GenerationBatch).where(GenerationBatch.id == batch_id).with_for_update()
+    )
+    if batch is None:
+        raise ApiError(500, "BATCH_MISSING", "任务关联的 Batch 不存在")
+    statuses = list(
+        db.scalars(select(GenerationJob.status).where(GenerationJob.batch_id == batch_id))
+    )
+    if statuses and all(status in JOB_TERMINAL_STATUSES for status in statuses):
+        succeeded = sum(status == JobStatus.SUCCEEDED for status in statuses)
+        if succeeded == len(statuses):
+            desired = BatchStatus.SUCCEEDED
+        elif succeeded:
+            desired = BatchStatus.PARTIAL
+        else:
+            desired = BatchStatus.FAILED_FINAL
+    else:
+        desired = BatchStatus.RUNNING
+    batch.status = desired
+    return desired
 
 
 def wallet_balances(db: Session, user_id: uuid.UUID) -> dict[str, dict[str, int]]:
