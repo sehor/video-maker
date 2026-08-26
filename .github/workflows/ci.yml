@@ -26,6 +26,8 @@ jobs:
         run: docker compose run --rm api pytest -q
       - name: API lint
         run: docker compose run --rm api ruff check app tests
+      - name: FFmpeg build and license inventory
+        run: docker compose run --rm api python scripts/export_ffmpeg_build.py
       - name: Web unit tests
         run: docker compose run --rm web pnpm run test
       - name: Web lint and build

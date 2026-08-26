@@ -3,6 +3,10 @@ FROM python:3.12.11-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir ".[dev]"
 COPY . .
