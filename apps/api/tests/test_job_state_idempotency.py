@@ -12,7 +12,7 @@ from app.models import (
     JobStatus,
     LedgerTransaction,
 )
-from app.provider import MockVideoProvider
+from app.provider_execution import GenerationExecutionService
 from app.state_machine import transition_attempt, transition_job
 from tests.test_mock_jobs import create_shot
 from tests.test_quote_ledger import grant, quote
@@ -22,7 +22,7 @@ def queued_job(client: TestClient, monkeypatch) -> dict:
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     grant(client, 2_000)
     item = quote(client, shot["id"])
@@ -204,7 +204,7 @@ def test_generation_idempotency_reuses_job_and_rejects_changed_body(
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     grant(client, 2_000)
     item = quote(client, shot["id"])
@@ -254,7 +254,7 @@ def test_stage_two_write_replays_do_not_repeat_grant_quote_or_cancel(
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     grant_payload = {
         "tier": "FAST",

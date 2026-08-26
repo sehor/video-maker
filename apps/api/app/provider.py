@@ -1,277 +1,242 @@
 import asyncio
+import json
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import select
-
-from app.db import SessionLocal
-from app.ledger import finish_reservation
-from app.models import (
-    AttemptStatus,
-    GenerationAttempt,
-    GenerationJob,
-    GenerationOutput,
-    JobStatus,
-    OutputValidationStatus,
-)
-from app.state_machine import transition_attempt, transition_job
-from app.storage import LocalObjectStorage
-
 MOCK_VIDEO_FIXTURE = Path(__file__).with_name("fixtures") / "mock-success.mp4"
 
-# Backward-compatible module alias for existing internal callers.
-transition = transition_job
+
+class FailureCode(StrEnum):
+    INVALID_INPUT = "INVALID_INPUT"
+    POLICY_REJECTED = "POLICY_REJECTED"
+    USER_CANCELLED = "USER_CANCELLED"
+    UNSUPPORTED_PARAMETER = "UNSUPPORTED_PARAMETER"
+    LICENSE_BLOCKED = "LICENSE_BLOCKED"
+    PROVIDER_TERMS_BLOCKED = "PROVIDER_TERMS_BLOCKED"
+    NO_ROUTE = "NO_ROUTE"
+    NETWORK_TIMEOUT = "NETWORK_TIMEOUT"
+    PROVIDER_5XX = "PROVIDER_5XX"
+    PROVIDER_CAPACITY = "PROVIDER_CAPACITY"
+    QUEUE_TIMEOUT = "QUEUE_TIMEOUT"
+    WORKER_INTERRUPTED = "WORKER_INTERRUPTED"
+    MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
+    OUT_OF_MEMORY = "OUT_OF_MEMORY"
+    WORKFLOW_FAILED = "WORKFLOW_FAILED"
+    ASSET_DOWNLOAD_FAILED = "ASSET_DOWNLOAD_FAILED"
+    OUTPUT_UPLOAD_FAILED = "OUTPUT_UPLOAD_FAILED"
+    OUTPUT_MISSING = "OUTPUT_MISSING"
+    OUTPUT_CORRUPTED = "OUTPUT_CORRUPTED"
+    OUTPUT_INVALID_MEDIA = "OUTPUT_INVALID_MEDIA"
+    LEDGER_ERROR = "LEDGER_ERROR"
+    STATE_CONFLICT = "STATE_CONFLICT"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+RETRYABLE_FAILURE_CODES = frozenset(
+    {
+        FailureCode.NETWORK_TIMEOUT,
+        FailureCode.PROVIDER_5XX,
+        FailureCode.PROVIDER_CAPACITY,
+        FailureCode.QUEUE_TIMEOUT,
+        FailureCode.WORKER_INTERRUPTED,
+    }
+)
+
+
+def is_retryable_failure(code: FailureCode) -> bool:
+    return code in RETRYABLE_FAILURE_CODES
+
+
+class SubmitDisposition(StrEnum):
+    ACCEPTED = "ACCEPTED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ProviderStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class CostSource(StrEnum):
+    ACTUAL = "ACTUAL"
+    BILLING_IMPORT = "BILLING_IMPORT"
+    ESTIMATED = "ESTIMATED"
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitRequest:
+    attempt_id: uuid.UUID
+    idempotency_key: str
+    prompt: str
+    negative_prompt: str | None
+    duration_ms: int
+    aspect_ratio: str
+    resolution: str
+    workflow_version: str
+    mode: str = "success"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttempt:
+    attempt_id: uuid.UUID
+    idempotency_key: str
+    provider_job_id: str | None
+    mode: str = "success"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderFailure:
+    code: FailureCode
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderOutput:
+    content: bytes
+    media_type: str
+    duration_ms: int
+    width: int
+    height: int
+    fps: float
+    codec: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitResult:
+    disposition: SubmitDisposition
+    provider_job_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PollResult:
+    status: ProviderStatus
+    provider_job_id: str | None = None
+    output: ProviderOutput | None = None
+    failure: ProviderFailure | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CancelResult:
+    accepted: bool
+    status: ProviderStatus
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookVerificationRequest:
+    headers: Mapping[str, str]
+    body: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderEvent:
+    event_id: str
+    provider_job_id: str
+    status: ProviderStatus
+    failure: ProviderFailure | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CostResult:
+    amount_minor: int
+    currency: str
+    source: CostSource
 
 
 class VideoProvider(Protocol):
-    async def submit(self, job_id: uuid.UUID) -> None: ...
+    async def submit(self, request: SubmitRequest) -> SubmitResult: ...
 
-    async def poll(self, provider_job_id: str) -> str: ...
+    async def poll(self, attempt: ProviderAttempt) -> PollResult: ...
 
-    async def cancel(self, provider_job_id: str) -> None: ...
+    async def cancel(self, attempt: ProviderAttempt) -> CancelResult: ...
+
+    async def verify_webhook(
+        self, request: WebhookVerificationRequest
+    ) -> ProviderEvent: ...
+
+    async def read_cost(self, attempt: ProviderAttempt) -> CostResult | None: ...
 
 
 class MockVideoProvider:
-    def __init__(self, storage: LocalObjectStorage) -> None:
-        self.storage = storage
+    """A deterministic Provider adapter with no database or object-storage knowledge."""
 
-    async def submit(self, job_id: uuid.UUID) -> None:
-        provider_id = f"mock-{uuid.uuid4().hex}"
-        with SessionLocal() as db:
-            job = db.get(GenerationJob, job_id)
-            if job is None or job.status == JobStatus.CANCELLED:
-                return
-            attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
-            if attempt is None:
-                return
-            attempt.provider_job_id = provider_id
-            if not (
-                transition_job(
-                    db, job, JobStatus.ROUTING, "job.routing", f"job:{job.id}:routing:v1"
-                )
-                and transition_attempt(
-                    db,
-                    attempt,
-                    AttemptStatus.SUBMITTING,
-                    "attempt.submitting",
-                    f"attempt:{attempt.id}:submitting:v1",
-                )
-                and transition_job(
-                    db,
-                    job,
-                    JobStatus.SUBMITTED,
-                    "provider.submitted",
-                    f"attempt:{attempt.id}:job-submitted:v1",
-                    {"provider_job_id": provider_id},
-                )
-                and transition_attempt(
-                    db,
-                    attempt,
-                    AttemptStatus.SUBMITTED,
-                    "attempt.submitted",
-                    f"attempt:{attempt.id}:submitted:v1",
-                    {"provider_job_id": provider_id},
-                )
-                and transition_job(
-                    db,
-                    job,
-                    JobStatus.RUNNING,
-                    "provider.started",
-                    f"attempt:{attempt.id}:job-running:v1",
-                )
-                and transition_attempt(
-                    db,
-                    attempt,
-                    AttemptStatus.RUNNING,
-                    "attempt.running",
-                    f"attempt:{attempt.id}:running:v1",
-                )
-            ):
-                db.rollback()
-                return
-            attempt.started_at = datetime.now(UTC)
-            job.started_at = datetime.now(UTC)
-            db.commit()
+    def __init__(self) -> None:
+        self.submit_calls: list[str] = []
 
-        if job.mock_mode == "delayed":
+    @staticmethod
+    def _provider_job_id(idempotency_key: str) -> str:
+        value = uuid.uuid5(uuid.NAMESPACE_URL, f"video-maker:{idempotency_key}")
+        return f"mock-{value.hex}"
+
+    async def submit(self, request: SubmitRequest) -> SubmitResult:
+        self.submit_calls.append(request.idempotency_key)
+        if request.mode == "submit_unknown":
+            return SubmitResult(disposition=SubmitDisposition.UNKNOWN)
+        return SubmitResult(
+            disposition=SubmitDisposition.ACCEPTED,
+            provider_job_id=self._provider_job_id(request.idempotency_key),
+        )
+
+    async def poll(self, attempt: ProviderAttempt) -> PollResult:
+        provider_job_id = attempt.provider_job_id or self._provider_job_id(
+            attempt.idempotency_key
+        )
+        if attempt.mode == "delayed":
             await asyncio.sleep(1)
-        elif job.mock_mode == "timeout":
-            await asyncio.sleep(0.1)
-            self._fail(job_id, provider_id, "MOCK_TIMEOUT", "Mock Provider 超时")
-            return
-        elif job.mock_mode == "failure":
-            self._fail(job_id, provider_id, "MOCK_PROVIDER_FAILED", "Mock Provider 返回失败")
-            return
-
-        if self._is_cancelled(job_id):
-            return
-        if job.mock_mode == "corrupt":
-            self._finish_corrupt(job_id, provider_id)
-            return
-
-        content = MOCK_VIDEO_FIXTURE.read_bytes()
-        self._finish_success(job_id, provider_id, content)
-        if job.mock_mode == "duplicate":
-            self._finish_success(job_id, provider_id, content)
-
-    async def poll(self, provider_job_id: str) -> str:
-        return "completed"
-
-    async def cancel(self, provider_job_id: str) -> None:
-        return None
-
-    def _is_cancelled(self, job_id: uuid.UUID) -> bool:
-        with SessionLocal() as db:
-            job = db.get(GenerationJob, job_id)
-            return job is None or job.status == JobStatus.CANCELLED
-
-    def _fail(self, job_id: uuid.UUID, provider_id: str, code: str, message: str) -> None:
-        with SessionLocal() as db:
-            job = db.get(GenerationJob, job_id)
-            attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
-            if job is None or attempt is None or job.status == JobStatus.CANCELLED:
-                return
-            attempt_status = (
-                AttemptStatus.TIMED_OUT if code == "MOCK_TIMEOUT" else AttemptStatus.FAILED_FINAL
+        if attempt.mode == "timeout":
+            return PollResult(
+                status=ProviderStatus.FAILED,
+                provider_job_id=provider_job_id,
+                failure=ProviderFailure(
+                    FailureCode.NETWORK_TIMEOUT, "Mock Provider 网络超时"
+                ),
             )
-            if transition_job(
-                db, job, JobStatus.FAILED_FINAL, "provider.failed", f"{provider_id}:failed"
-            ) and transition_attempt(
-                db,
-                attempt,
-                attempt_status,
-                "attempt.failed",
-                f"{provider_id}:attempt-failed",
-                {"failure_code": code},
-            ):
-                job.failure_code = code
-                job.error_message = message
-                job.finished_at = datetime.now(UTC)
-                attempt.failure_code = code
-                attempt.finished_at = datetime.now(UTC)
-                finish_reservation(db, job, settle=False)
-                db.commit()
-            else:
-                db.rollback()
-
-    def _finish_corrupt(self, job_id: uuid.UUID, provider_id: str) -> None:
-        stored = self.storage.write_bytes("outputs", b"not-an-mp4", "video/mp4")
-        with SessionLocal() as db:
-            job = db.get(GenerationJob, job_id)
-            attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
-            if job is None or attempt is None or job.status == JobStatus.CANCELLED:
-                self.storage.delete(stored.key)
-                return
-            if not transition_job(
-                db,
-                job,
-                JobStatus.POSTPROCESSING,
-                "output.postprocessing",
-                f"{provider_id}:postprocessing",
-            ):
-                self.storage.delete(stored.key)
-                return
-            db.add(
-                GenerationOutput(
-                    job_id=job.id,
-                    attempt_id=attempt.id,
-                    object_key=stored.key,
-                    media_type=stored.mime_type,
-                    size_bytes=stored.size_bytes,
-                    sha256=stored.sha256,
-                    validation_status=OutputValidationStatus.INVALID,
-                )
+        if attempt.mode == "failure":
+            return PollResult(
+                status=ProviderStatus.FAILED,
+                provider_job_id=provider_job_id,
+                failure=ProviderFailure(
+                    FailureCode.WORKFLOW_FAILED, "Mock Provider 工作流失败"
+                ),
             )
-            if not transition_job(
-                db,
-                job,
-                JobStatus.VALIDATING,
-                "output.validating",
-                f"{provider_id}:validating",
-            ) or not transition_job(
-                db,
-                job,
-                JobStatus.FAILED_FINAL,
-                "output.invalid",
-                f"{provider_id}:corrupt",
-            ) or not transition_attempt(
-                db,
-                attempt,
-                AttemptStatus.FAILED_FINAL,
-                "attempt.failed",
-                f"{provider_id}:attempt-corrupt",
-                {"failure_code": "OUTPUT_INVALID_MP4"},
-            ):
-                db.rollback()
-                self.storage.delete(stored.key)
-                return
-            job.failure_code = "OUTPUT_INVALID_MP4"
-            job.error_message = "Provider 输出不是有效 MP4"
-            job.finished_at = datetime.now(UTC)
-            attempt.failure_code = "OUTPUT_INVALID_MP4"
-            attempt.finished_at = datetime.now(UTC)
-            finish_reservation(db, job, settle=False)
-            db.commit()
-
-    def _finish_success(self, job_id: uuid.UUID, provider_id: str, content: bytes) -> None:
-        with SessionLocal() as db:
-            job = db.get(GenerationJob, job_id)
-            attempt = db.scalar(select(GenerationAttempt).where(GenerationAttempt.job_id == job_id))
-            if job is None or attempt is None or job.status != JobStatus.RUNNING:
-                return
-            if not transition_job(
-                db,
-                job,
-                JobStatus.POSTPROCESSING,
-                "output.postprocessing",
-                f"{provider_id}:postprocessing",
-            ):
-                return
-            stored = self.storage.write_bytes("outputs", content, "video/mp4")
-            output = GenerationOutput(
-                job_id=job.id,
-                attempt_id=attempt.id,
-                object_key=stored.key,
-                media_type=stored.mime_type,
-                duration_ms=job.duration_ms,
+        content = (
+            b"not-an-mp4"
+            if attempt.mode == "corrupt"
+            else MOCK_VIDEO_FIXTURE.read_bytes()
+        )
+        return PollResult(
+            status=ProviderStatus.SUCCEEDED,
+            provider_job_id=provider_job_id,
+            output=ProviderOutput(
+                content=content,
+                media_type="video/mp4",
+                duration_ms=2_000,
                 width=1280,
                 height=720,
                 fps=25,
                 codec="mpeg4",
-                size_bytes=stored.size_bytes,
-                sha256=stored.sha256,
-                validation_status=OutputValidationStatus.VALID,
-            )
-            db.add(output)
-            db.flush()
-            job.final_output_id = output.id
-            if not transition_job(
-                db,
-                job,
-                JobStatus.VALIDATING,
-                "output.validating",
-                f"{provider_id}:validating",
-            ) or not transition_job(
-                db,
-                job,
-                JobStatus.SUCCEEDED,
-                "provider.completed",
-                f"{provider_id}:completed",
-                {"output_id": str(output.id)},
-            ) or not transition_attempt(
-                db,
-                attempt,
-                AttemptStatus.SUCCEEDED,
-                "attempt.succeeded",
-                f"{provider_id}:attempt-completed",
-                {"output_id": str(output.id)},
-            ):
-                db.rollback()
-                self.storage.delete(stored.key)
-                return
-            job.finished_at = datetime.now(UTC)
-            attempt.finished_at = datetime.now(UTC)
-            finish_reservation(db, job, settle=True)
-            db.commit()
+            ),
+        )
+
+    async def cancel(self, attempt: ProviderAttempt) -> CancelResult:
+        return CancelResult(accepted=True, status=ProviderStatus.CANCELLED)
+
+    async def verify_webhook(
+        self, request: WebhookVerificationRequest
+    ) -> ProviderEvent:
+        payload = json.loads(request.body)
+        return ProviderEvent(
+            event_id=str(payload["event_id"]),
+            provider_job_id=str(payload["provider_job_id"]),
+            status=ProviderStatus(str(payload["status"])),
+        )
+
+    async def read_cost(self, attempt: ProviderAttempt) -> CostResult | None:
+        return CostResult(amount_minor=0, currency="USD", source=CostSource.ESTIMATED)

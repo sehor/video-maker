@@ -2,7 +2,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from app.provider import MockVideoProvider
+from app.provider_execution import GenerationExecutionService
 from tests.test_projects_permissions import create_project
 
 
@@ -62,17 +62,22 @@ def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) 
     failed = generate(client, shot["id"], "failure")
     assert (failed["status"], failed["failure_code"]) == (
         "FAILED_FINAL",
-        "MOCK_PROVIDER_FAILED",
+        "WORKFLOW_FAILED",
     )
+    assert len(failed["attempts"]) == 1
     timed_out = generate(client, shot["id"], "timeout")
     assert (timed_out["status"], timed_out["failure_code"]) == (
         "FAILED_FINAL",
-        "MOCK_TIMEOUT",
+        "NETWORK_TIMEOUT",
     )
+    assert len(timed_out["attempts"]) == 2
+    assert {attempt["failure_code"] for attempt in timed_out["attempts"]} == {
+        "NETWORK_TIMEOUT"
+    }
     corrupt = generate(client, shot["id"], "corrupt")
     assert (corrupt["status"], corrupt["failure_code"]) == (
         "FAILED_FINAL",
-        "OUTPUT_INVALID_MP4",
+        "OUTPUT_INVALID_MEDIA",
     )
     assert corrupt["outputs"][0]["validation_status"] == "INVALID"
     assert corrupt["final_output_id"] is None
@@ -85,7 +90,7 @@ def test_cancelled_job_is_terminal(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     job = generate(client, shot["id"], "delayed")
     assert job["status"] == "QUEUED"
