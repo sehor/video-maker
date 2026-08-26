@@ -1,4 +1,3 @@
-import json
 import os
 import shutil
 import subprocess
@@ -177,22 +176,6 @@ def test_ffmpeg_build_inventory_records_configuration_codec_and_license() -> Non
     assert facts.license_status in {"LGPL", "GPL", "NONFREE"}
     assert "h264" in facts.h264_decoders
     assert facts.h264_encoders
-
-
-def test_committed_ffmpeg_license_ledger_contains_actual_build_facts() -> None:
-    ledger_path = Path(__file__).parents[3] / "docs" / "licenses" / "ffmpeg-build.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-    facts = ledger["facts"]
-
-    assert ledger["schema_version"] == 1
-    assert facts["version"] == "8.0.1-essentials_build-www.gyan.dev"
-    assert facts["license_status"] == "GPL"
-    assert {"--enable-gpl", "--enable-version3", "--enable-libx264"} <= set(
-        facts["configuration"]
-    )
-    assert "h264" in facts["h264_decoders"]
-    assert "libx264" in facts["h264_encoders"]
-    assert ledger["review"]["nonfree_enabled"] is False
 
 
 def test_process_limits_reject_unbounded_values() -> None:

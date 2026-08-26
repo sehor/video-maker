@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     media_cpu_time_seconds: Annotated[int, Field(gt=0, le=600)] = 60
     media_probe_max_memory_bytes: Annotated[
         int, Field(ge=67_108_864, le=4_294_967_296)
-    ] = 268_435_456
+    ] = 1_073_741_824
     media_decode_max_memory_bytes: Annotated[
         int, Field(ge=67_108_864, le=4_294_967_296)
-    ] = 536_870_912
+    ] = 2_147_483_648
     media_max_output_bytes: Annotated[int, Field(gt=0, le=4_194_304)] = 1_048_576
     media_cpu_count: Annotated[int, Field(gt=0, le=4)] = 1
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]

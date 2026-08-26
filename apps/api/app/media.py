@@ -267,12 +267,12 @@ class MediaValidator:
         self._probe_limits = probe_limits or MediaProcessLimits(
             timeout_seconds=10,
             cpu_time_seconds=10,
-            max_memory_bytes=256 * 1024 * 1024,
+            max_memory_bytes=1024 * 1024 * 1024,
         )
         self._decode_limits = decode_limits or MediaProcessLimits(
             timeout_seconds=30,
             cpu_time_seconds=30,
-            max_memory_bytes=512 * 1024 * 1024,
+            max_memory_bytes=2 * 1024 * 1024 * 1024,
         )
 
     def validate(self, path: Path, policy: MediaPolicy) -> MediaFacts:
@@ -523,7 +523,7 @@ def inspect_ffmpeg_build(
     build_limits = limits or MediaProcessLimits(
         timeout_seconds=10,
         cpu_time_seconds=10,
-        max_memory_bytes=256 * 1024 * 1024,
+        max_memory_bytes=1024 * 1024 * 1024,
     )
 
     def run(*args: str) -> str:
