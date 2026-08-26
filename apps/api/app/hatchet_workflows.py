@@ -67,9 +67,11 @@ async def generation_submit(
         child_key=f"job:{input.job_id}:submit:v1",
     )
     settings = get_settings()
-    await GenerationExecutionService(LocalObjectStorage(settings.storage_root)).execute(
-        input.job_id
+    store = LocalObjectStorage(
+        settings.storage_root,
+        settings.storage_claim_secret.get_secret_value().encode(),
     )
+    await GenerationExecutionService(store).execute(input.job_id)
     logger.info(
         "hatchet.child_completed",
         job_id=str(input.job_id),

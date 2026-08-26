@@ -90,3 +90,18 @@ def test_shot_reference_requires_an_asset_from_the_same_project(client: TestClie
         json={"asset_id": other_asset["id"], "reference_role": "STYLE"},
     )
     assert response.status_code == 404
+
+    reference_id = refreshed.json()["references"][0]["id"]
+    deleted = client.delete(
+        f"/v1/shots/{shot['id']}/references/{reference_id}",
+        headers={"x-test-user": "owner"},
+    )
+    assert deleted.status_code == 204
+    assert client.get(
+        f"/v1/assets/{asset['id']}/content", headers={"x-test-user": "owner"}
+    ).status_code == 200
+    assert (
+        client.get(f"/v1/shots/{shot['id']}", headers={"x-test-user": "owner"})
+        .json()["references"]
+        == []
+    )

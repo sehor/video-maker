@@ -2,7 +2,11 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
+from app.db import SessionLocal
+from app.models import GenerationAttempt, GenerationOutput
 from app.provider_execution import GenerationExecutionService
+from app.storage import LocalObjectStorage
 from tests.test_projects_permissions import create_project
 
 
@@ -55,6 +59,20 @@ def test_mock_success_produces_playable_mp4(client: TestClient) -> None:
     response = client.get(f"/v1/outputs/{job['outputs'][0]['id']}/content")
     assert response.status_code == 200
     assert response.content[4:8] == b"ftyp"
+
+    with SessionLocal() as db:
+        output = db.get(GenerationOutput, uuid.UUID(job["outputs"][0]["id"]))
+        assert output is not None
+        attempt = db.get(GenerationAttempt, output.attempt_id)
+        assert attempt is not None
+        assert attempt.job_id == output.job_id == uuid.UUID(job["id"])
+        settings = get_settings()
+        store = LocalObjectStorage(
+            settings.storage_root,
+            settings.storage_claim_secret.get_secret_value().encode(),
+        )
+        stored = store.stat(output.object_key)
+        assert (stored.size_bytes, stored.sha256) == (output.size_bytes, output.sha256)
 
 
 def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) -> None:

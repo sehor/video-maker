@@ -41,6 +41,14 @@ from tests.test_mock_jobs import create_shot, generate
 WEBHOOK_SECRET = "test-webhook-secret"
 
 
+def object_storage() -> LocalObjectStorage:
+    settings = get_settings()
+    return LocalObjectStorage(
+        settings.storage_root,
+        settings.storage_claim_secret.get_secret_value().encode(),
+    )
+
+
 def webhook_body(
     event_id: str, provider_job_id: str, status: ProviderStatus, **extra: str
 ) -> bytes:
@@ -83,7 +91,7 @@ def running_job(
 ) -> tuple[dict, GenerationExecutionService]:
     queued = generate(raw_client, create_shot(raw_client)["id"], "success")
     executor = GenerationExecutionService(
-        LocalObjectStorage(get_settings().storage_root), provider=provider
+        object_storage(), provider=provider
     )
     asyncio.run(executor.execute(uuid.UUID(queued["id"])))
     running = raw_client.get(f"/v1/generations/{queued['id']}").json()
@@ -218,7 +226,7 @@ def test_stale_webhook_claim_is_reconciled_after_lease_expiry(
         db.commit()
 
     recovered = GenerationExecutionService(
-        LocalObjectStorage(get_settings().storage_root), provider=provider
+        object_storage(), provider=provider
     )
     result = asyncio.run(recovered.handle_webhook("mock", request_for(body)))
     assert result.status == ProviderEventInboxStatus.PROCESSED
@@ -250,7 +258,7 @@ def test_late_old_attempt_event_cannot_rewrite_success(raw_client: TestClient) -
     queued = generate(raw_client, create_shot(raw_client)["id"], "success")
     provider = RetryThenSuccessProvider()
     executor = GenerationExecutionService(
-        LocalObjectStorage(get_settings().storage_root), provider=provider
+        object_storage(), provider=provider
     )
     asyncio.run(executor.execute(uuid.UUID(queued["id"])))
 

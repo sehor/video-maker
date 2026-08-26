@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     auth_audience: str = "video-factory-api"
     storage_root: Path = Path("./data/storage")
     max_upload_bytes: int = 50 * 1024 * 1024
+    storage_claim_secret: SecretStr = SecretStr(
+        "development-only-storage-claim-secret"
+    )
+    storage_claim_ttl_seconds: Annotated[int, Field(gt=0, le=900)] = 300
     hatchet_client_token_file: Path | None = None
     hatchet_client_host_port: str = "localhost:7077"
     hatchet_server_url: str = "http://localhost:8888"
@@ -34,6 +38,15 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def reject_development_claim_secret_in_production(self) -> "Settings":
+        secret = self.storage_claim_secret.get_secret_value()
+        if len(secret.encode()) < 32:
+            raise ValueError("STORAGE_CLAIM_SECRET must contain at least 32 bytes")
+        if self.environment == "production" and secret.startswith("development-only-"):
+            raise ValueError("STORAGE_CLAIM_SECRET must be replaced in production")
+        return self
 
 
 @lru_cache

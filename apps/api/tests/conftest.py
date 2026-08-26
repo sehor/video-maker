@@ -18,6 +18,7 @@ else:
 os.environ["STORAGE_ROOT"] = "./test-storage"
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
 os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
+os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"
 
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
@@ -58,7 +59,12 @@ class InlineWorkflowStarter:
     """Runs the Hatchet child boundary in-process for Docker-free unit tests."""
 
     async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
-        executor = GenerationExecutionService(LocalObjectStorage(get_settings().storage_root))
+        settings = get_settings()
+        store = LocalObjectStorage(
+            settings.storage_root,
+            settings.storage_claim_secret.get_secret_value().encode(),
+        )
+        executor = GenerationExecutionService(store)
         await executor.execute(request.job_id)
         return WorkflowStartResult(workflow_id=f"test:{request.idempotency_key}")
 

@@ -253,3 +253,19 @@ def test_output_attempt_must_belong_to_the_same_job(contract_db: Session) -> Non
     )
     with pytest.raises(IntegrityError):
         contract_db.commit()
+
+
+def test_shot_stores_specs_while_assets_and_references_have_separate_lifecycles() -> None:
+    shot_columns = set(Shot.__table__.columns.keys())
+    assert {"title", "prompt", "duration_seconds", "aspect_ratio"} <= shot_columns
+    assert {
+        "asset_id",
+        "object_key",
+        "media_type",
+        "size_bytes",
+        "sha256",
+        "generation_output_id",
+    }.isdisjoint(shot_columns)
+    assert ShotReference.__table__.name == "shot_references"
+    assert ProjectAsset.__table__.name == "project_assets"
+    assert GenerationOutput.__table__.name == "generation_outputs"

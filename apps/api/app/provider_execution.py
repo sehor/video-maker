@@ -38,7 +38,7 @@ from app.provider import (
     is_retryable_failure,
 )
 from app.state_machine import transition_attempt, transition_job
-from app.storage import LocalObjectStorage
+from app.storage import ObjectStorage
 
 MAX_ATTEMPTS_PER_CANDIDATE = 2
 MAX_ATTEMPTS_PER_JOB = 3
@@ -98,7 +98,7 @@ class GenerationExecutionService:
 
     def __init__(
         self,
-        storage: LocalObjectStorage,
+        storage: ObjectStorage,
         provider: VideoProvider | None = None,
         session_factory: sessionmaker[Session] = SessionLocal,
     ) -> None:
@@ -703,7 +703,12 @@ class GenerationExecutionService:
         return AttemptBudget(total_attempts=total or 0, candidate_attempts=candidate or 0)
 
     def _finish_output(self, context: AttemptContext, output: ProviderOutput) -> None:
-        stored = self._storage.write_bytes("outputs", output.content, output.media_type)
+        claim = self._storage.write_claim(
+            "outputs",
+            mime_type=output.media_type,
+            max_bytes=max(1, len(output.content)),
+        )
+        stored = self._storage.put(claim, output.content, output.media_type)
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
             attempt = db.get(GenerationAttempt, context.attempt_id)
