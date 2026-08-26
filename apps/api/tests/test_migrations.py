@@ -28,6 +28,7 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "project_assets",
         "shot_references",
         "generation_jobs",
+        "generation_batches",
         "generation_attempts",
         "generation_outputs",
         "job_events",
@@ -103,11 +104,36 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     assert "fk_generation_jobs_final_output" in {
         constraint["name"] for constraint in inspector.get_foreign_keys("generation_jobs")
     }
+    assert "fk_generation_jobs_batch_identity" in {
+        constraint["name"] for constraint in inspector.get_foreign_keys("generation_jobs")
+    }
+    assert "fk_generation_jobs_batch_reservation" in {
+        constraint["name"] for constraint in inspector.get_foreign_keys("generation_jobs")
+    }
     assert "uq_generation_jobs_final_output_id" in {
         constraint["name"] for constraint in inspector.get_unique_constraints("generation_jobs")
     }
     assert {"quote_id", "ledger_unit", "reserved_amount_ms", "settlement_status"} <= {
         column["name"] for column in inspector.get_columns("generation_jobs")
+    }
+    assert {
+        "user_id",
+        "project_id",
+        "status",
+        "ledger_unit",
+        "reserved_amount_ms",
+        "reserved_tx_id",
+    } <= {column["name"] for column in inspector.get_columns("generation_batches")}
+    assert {
+        "uq_generation_batches_identity",
+        "uq_generation_batches_reservation_identity",
+        "uq_generation_batches_reserved_tx_id",
+    } <= {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("generation_batches")
+    }
+    assert "uq_generation_jobs_standalone_reserved_tx_id" in {
+        index["name"] for index in inspector.get_indexes("generation_jobs")
     }
     assert {
         "job_id",

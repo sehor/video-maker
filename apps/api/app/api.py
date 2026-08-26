@@ -19,11 +19,14 @@ from app.ledger import (
     finish_reservation,
     grant_seconds,
     reserve_quote_for_job,
+    reserve_quotes_for_batch,
     wallet_balances,
 )
 from app.models import (
     AttemptStatus,
+    BatchStatus,
     GenerationAttempt,
+    GenerationBatch,
     GenerationJob,
     GenerationOutput,
     JobStatus,
@@ -47,6 +50,8 @@ from app.provider import (
 )
 from app.provider_execution import GenerationExecutionService
 from app.schemas import (
+    BatchCreate,
+    GenerationBatchOut,
     GenerationCreate,
     GenerationJobList,
     GenerationJobOut,
@@ -371,6 +376,21 @@ def load_job(db: Session, job_id: uuid.UUID, owner_id: uuid.UUID) -> GenerationJ
     return job
 
 
+def load_batch(db: Session, batch_id: uuid.UUID, owner_id: uuid.UUID) -> GenerationBatch:
+    batch = db.scalar(
+        select(GenerationBatch)
+        .where(GenerationBatch.id == batch_id, GenerationBatch.user_id == owner_id)
+        .options(
+            selectinload(GenerationBatch.jobs).selectinload(GenerationJob.attempts),
+            selectinload(GenerationBatch.jobs).selectinload(GenerationJob.outputs),
+            selectinload(GenerationBatch.jobs).selectinload(GenerationJob.events),
+        )
+    )
+    if batch is None:
+        raise not_found("batch")
+    return batch
+
+
 def load_quote(db: Session, quote_id: uuid.UUID, owner_id: uuid.UUID) -> Quote:
     quote = db.scalar(select(Quote).where(Quote.id == quote_id, Quote.user_id == owner_id))
     if quote is None:
@@ -558,6 +578,101 @@ def generate(
     )
     db.commit()
     return load_job(db, job.id, user.id)
+
+
+@router.post("/batches", response_model=GenerationBatchOut, status_code=202)
+def create_batch(
+    payload: BatchCreate,
+    user: CurrentUser,
+    db: Db,
+    idempotency_key: IdempotencyKey = None,
+) -> GenerationBatch:
+    decision = acquire(
+        db,
+        user_id=user.id,
+        scope="POST:/v1/batches",
+        key=idempotency_key,
+        payload=payload.model_dump(mode="json"),
+    )
+    replay_id = replay_result_id(decision, "generation_batch")
+    if replay_id is not None:
+        return load_batch(db, replay_id, user.id)
+
+    batch = GenerationBatch(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        status=BatchStatus.QUEUED,
+    )
+    claimed = reserve_quotes_for_batch(
+        db,
+        user,
+        batch,
+        [item.quote_id for item in payload.items],
+    )
+    for item, (quote, shot, snapshot) in zip(payload.items, claimed, strict=True):
+        job = GenerationJob(
+            user_id=user.id,
+            project_id=shot.project_id,
+            shot_id=shot.id,
+            batch_id=batch.id,
+            tier_code=quote.tier_code,
+            duration_ms=quote.duration_ms,
+            resolution=quote.resolution,
+            aspect_ratio=quote.aspect_ratio,
+            variant_index=0,
+            quote_id=quote.id,
+            quote_snapshot_json=snapshot,
+            status=JobStatus.CREATED,
+            ledger_unit=quote.billing_unit,
+            reserved_amount_ms=quote.reserved_ms,
+            settlement_status=SettlementStatus.RESERVED,
+            reserved_tx_id=batch.reserved_tx_id,
+            mock_mode=item.mock_mode,
+        )
+        db.add(job)
+        db.flush()
+        if not transition_job(
+            db,
+            job,
+            JobStatus.RESERVED,
+            "job.reserved",
+            f"job:{job.id}:reserved:v1",
+            {"ledger_transaction_id": str(batch.reserved_tx_id), "batch_id": str(batch.id)},
+        ):
+            raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+        db.add(
+            GenerationAttempt(
+                job_id=job.id,
+                attempt_no=1,
+                provider_code="mock",
+                workflow_version="mock:v1",
+                status=AttemptStatus.CREATED,
+            )
+        )
+        if not transition_job(
+            db,
+            job,
+            JobStatus.QUEUED,
+            "job.queued",
+            f"job:{job.id}:queued:v1",
+        ):
+            raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+        enqueue_generation_workflow(db, job)
+
+    complete(
+        db,
+        decision.record,
+        result_type="generation_batch",
+        result_id=batch.id,
+        response_status=202,
+    )
+    db.commit()
+    return load_batch(db, batch.id, user.id)
+
+
+@router.get("/batches/{batch_id}", response_model=GenerationBatchOut)
+def get_batch(batch_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationBatch:
+    return load_batch(db, batch_id, user.id)
 
 
 @router.get("/generations/{job_id}", response_model=GenerationJobOut)

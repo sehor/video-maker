@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,6 +65,14 @@ class SettlementStatus(str, enum.Enum):
     RESERVED = "RESERVED"
     SETTLED = "SETTLED"
     RELEASED = "RELEASED"
+
+
+class BatchStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL = "PARTIAL"
+    FAILED_FINAL = "FAILED_FINAL"
 
 
 class ApiIdempotencyStatus(str, enum.Enum):
@@ -436,6 +445,53 @@ class LedgerPosting(Base):
     transaction: Mapped[LedgerTransaction] = relationship(back_populates="postings")
 
 
+class GenerationBatch(Base, TimestampMixin):
+    __tablename__ = "generation_batches"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "user_id"],
+            ["projects.id", "projects.owner_id"],
+            name="fk_generation_batches_project_owner",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "id", "user_id", "project_id", name="uq_generation_batches_identity"
+        ),
+        UniqueConstraint(
+            "id", "reserved_tx_id", name="uq_generation_batches_reservation_identity"
+        ),
+        UniqueConstraint("reserved_tx_id", name="uq_generation_batches_reserved_tx_id"),
+        CheckConstraint(
+            "status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED_FINAL')",
+            name="ck_generation_batches_status",
+        ),
+        CheckConstraint(
+            "reserved_amount_ms > 0", name="ck_generation_batches_reserved_amount_ms"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True, nullable=False)
+    status: Mapped[BatchStatus] = mapped_column(
+        Enum(BatchStatus, native_enum=False, length=24),
+        default=BatchStatus.QUEUED,
+        nullable=False,
+    )
+    ledger_unit: Mapped[str] = mapped_column(String(24), nullable=False)
+    reserved_amount_ms: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reserved_tx_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ledger_transactions.id", ondelete="RESTRICT"), nullable=False
+    )
+
+    jobs: Mapped[list["GenerationJob"]] = relationship(
+        back_populates="batch",
+        foreign_keys="GenerationJob.batch_id",
+        primaryjoin="GenerationBatch.id == GenerationJob.batch_id",
+        order_by="GenerationJob.created_at",
+    )
+
+
 class GenerationJob(Base, TimestampMixin):
     __tablename__ = "generation_jobs"
     __table_args__ = (
@@ -458,6 +514,22 @@ class GenerationJob(Base, TimestampMixin):
             ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
+            ["batch_id", "user_id", "project_id"],
+            [
+                "generation_batches.id",
+                "generation_batches.user_id",
+                "generation_batches.project_id",
+            ],
+            name="fk_generation_jobs_batch_identity",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["batch_id", "reserved_tx_id"],
+            ["generation_batches.id", "generation_batches.reserved_tx_id"],
+            name="fk_generation_jobs_batch_reservation",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
             ["final_output_id", "id"],
             ["generation_outputs.id", "generation_outputs.job_id"],
             name="fk_generation_jobs_final_output",
@@ -465,11 +537,17 @@ class GenerationJob(Base, TimestampMixin):
         ),
         UniqueConstraint("final_output_id", name="uq_generation_jobs_final_output_id"),
         UniqueConstraint("quote_id", name="uq_generation_jobs_quote_id"),
-        UniqueConstraint("reserved_tx_id", name="uq_generation_jobs_reserved_tx_id"),
         CheckConstraint("duration_ms > 0", name="ck_generation_jobs_duration_ms"),
         CheckConstraint("resolution IN ('720P', '1080P')", name="ck_generation_jobs_resolution"),
         CheckConstraint("aspect_ratio IN ('16:9', '9:16')", name="ck_generation_jobs_aspect"),
         CheckConstraint("variant_index >= 0", name="ck_generation_jobs_variant_index"),
+        Index(
+            "uq_generation_jobs_standalone_reserved_tx_id",
+            "reserved_tx_id",
+            unique=True,
+            postgresql_where=text("batch_id IS NULL"),
+            sqlite_where=text("batch_id IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -518,6 +596,11 @@ class GenerationJob(Base, TimestampMixin):
     )
     outbox_events: Mapped[list["OutboxEvent"]] = relationship(
         back_populates="job", cascade="all, delete-orphan"
+    )
+    batch: Mapped[GenerationBatch | None] = relationship(
+        back_populates="jobs",
+        foreign_keys=[batch_id],
+        primaryjoin="GenerationBatch.id == GenerationJob.batch_id",
     )
 
 
