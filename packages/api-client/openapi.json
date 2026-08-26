@@ -981,6 +981,45 @@
         }
       }
     },
+    "/v1/provider-webhooks/{provider_code}": {
+      "post": {
+        "summary": "Receive Provider Webhook",
+        "operationId": "receive_provider_webhook_v1_provider_webhooks__provider_code__post",
+        "parameters": [
+          {
+            "name": "provider_code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Code"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderWebhookAck"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/generations/{job_id}/cancel": {
       "post": {
         "summary": "Cancel Generation",
@@ -1635,6 +1674,7 @@
           "ROUTING",
           "SUBMITTED",
           "RUNNING",
+          "CANCEL_REQUESTED",
           "POSTPROCESSING",
           "VALIDATING",
           "SUCCEEDED",
@@ -1949,6 +1989,33 @@
         },
         "type": "object",
         "title": "ProjectUpdate"
+      },
+      "ProviderEventInboxStatus": {
+        "type": "string",
+        "enum": [
+          "RECEIVED",
+          "PROCESSING",
+          "PROCESSED",
+          "IGNORED"
+        ],
+        "title": "ProviderEventInboxStatus"
+      },
+      "ProviderWebhookAck": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProviderEventInboxStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "status"
+        ],
+        "title": "ProviderWebhookAck"
       },
       "QuoteCreate": {
         "properties": {

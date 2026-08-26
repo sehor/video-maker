@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import uuid
 from collections.abc import Mapping
@@ -167,8 +169,9 @@ class VideoProvider(Protocol):
 class MockVideoProvider:
     """A deterministic Provider adapter with no database or object-storage knowledge."""
 
-    def __init__(self) -> None:
+    def __init__(self, webhook_secret: str | None = None) -> None:
         self.submit_calls: list[str] = []
+        self._webhook_secret = webhook_secret
 
     @staticmethod
     def _provider_job_id(idempotency_key: str) -> str:
@@ -231,12 +234,43 @@ class MockVideoProvider:
     async def verify_webhook(
         self, request: WebhookVerificationRequest
     ) -> ProviderEvent:
-        payload = json.loads(request.body)
+        if self._webhook_secret is None:
+            raise WebhookVerificationError("webhook secret is not configured")
+        supplied = request.headers.get("x-provider-signature", "")
+        expected = hmac.new(
+            self._webhook_secret.encode(), request.body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(supplied, expected):
+            raise WebhookVerificationError("invalid webhook signature")
+        try:
+            payload = json.loads(request.body)
+            event_id = payload["event_id"]
+            provider_job_id = payload["provider_job_id"]
+            status = ProviderStatus(payload["status"])
+            if not isinstance(event_id, str) or not event_id or len(event_id) > 255:
+                raise ValueError("invalid event id")
+            if (
+                not isinstance(provider_job_id, str)
+                or not provider_job_id
+                or len(provider_job_id) > 255
+            ):
+                raise ValueError("invalid provider job id")
+            failure = None
+            if status == ProviderStatus.FAILED:
+                failure_code = FailureCode(payload["failure_code"])
+                failure = ProviderFailure(failure_code, "Provider reported failure")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise WebhookVerificationError("invalid webhook payload") from exc
         return ProviderEvent(
-            event_id=str(payload["event_id"]),
-            provider_job_id=str(payload["provider_job_id"]),
-            status=ProviderStatus(str(payload["status"])),
+            event_id=event_id,
+            provider_job_id=provider_job_id,
+            status=status,
+            failure=failure,
         )
 
     async def read_cost(self, attempt: ProviderAttempt) -> CostResult | None:
         return CostResult(amount_minor=0, currency="USD", source=CostSource.ESTIMATED)
+
+
+class WebhookVerificationError(ValueError):
+    pass

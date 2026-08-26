@@ -264,6 +264,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/provider-webhooks/{provider_code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receive Provider Webhook */
+        post: operations["receive_provider_webhook_v1_provider_webhooks__provider_code__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/generations/{job_id}/cancel": {
         parameters: {
             query?: never;
@@ -514,7 +531,7 @@ export interface components {
          * JobStatus
          * @enum {string}
          */
-        JobStatus: "CREATED" | "RESERVED" | "QUEUED" | "ROUTING" | "SUBMITTED" | "RUNNING" | "POSTPROCESSING" | "VALIDATING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED" | "EXPIRED" | "REJECTED_POLICY";
+        JobStatus: "CREATED" | "RESERVED" | "QUEUED" | "ROUTING" | "SUBMITTED" | "RUNNING" | "CANCEL_REQUESTED" | "POSTPROCESSING" | "VALIDATING" | "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED" | "EXPIRED" | "REJECTED_POLICY";
         /** LedgerPostingOut */
         LedgerPostingOut: {
             /**
@@ -650,6 +667,17 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+        };
+        /**
+         * ProviderEventInboxStatus
+         * @enum {string}
+         */
+        ProviderEventInboxStatus: "RECEIVED" | "PROCESSING" | "PROCESSED" | "IGNORED";
+        /** ProviderWebhookAck */
+        ProviderWebhookAck: {
+            /** Event Id */
+            event_id: string;
+            status: components["schemas"]["ProviderEventInboxStatus"];
         };
         /** QuoteCreate */
         QuoteCreate: {
@@ -1492,6 +1520,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationJobOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receive_provider_webhook_v1_provider_webhooks__provider_code__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderWebhookAck"];
                 };
             };
             /** @description Validation Error */

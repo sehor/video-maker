@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     hatchet_server_url: str = "http://localhost:8888"
     outbox_dispatcher_enabled: bool = True
     outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
+    mock_provider_webhook_secret: str | None = None
+    provider_webhook_max_bytes: Annotated[int, Field(gt=0, le=1_048_576)] = 65_536
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
