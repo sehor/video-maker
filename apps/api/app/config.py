@@ -30,6 +30,19 @@ class Settings(BaseSettings):
     outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
     mock_provider_webhook_secret: str | None = None
     provider_webhook_max_bytes: Annotated[int, Field(gt=0, le=1_048_576)] = 65_536
+    ffprobe_binary: str = "ffprobe"
+    ffmpeg_binary: str = "ffmpeg"
+    media_probe_timeout_seconds: Annotated[float, Field(gt=0, le=60)] = 10
+    media_decode_timeout_seconds: Annotated[float, Field(gt=0, le=600)] = 60
+    media_cpu_time_seconds: Annotated[int, Field(gt=0, le=600)] = 60
+    media_probe_max_memory_bytes: Annotated[
+        int, Field(ge=67_108_864, le=4_294_967_296)
+    ] = 1_073_741_824
+    media_decode_max_memory_bytes: Annotated[
+        int, Field(ge=67_108_864, le=4_294_967_296)
+    ] = 2_147_483_648
+    media_max_output_bytes: Annotated[int, Field(gt=0, le=4_194_304)] = 1_048_576
+    media_cpu_count: Annotated[int, Field(gt=0, le=4)] = 1
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
