@@ -6,10 +6,12 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
+from importlib.resources import files
 from typing import Protocol
 
-MOCK_VIDEO_FIXTURE = Path(__file__).with_name("fixtures") / "mock-success.mp4"
+
+def mock_video_fixture() -> bytes:
+    return files("app").joinpath("fixtures", "mock-success.mp4").read_bytes()
 
 
 class FailureCode(StrEnum):
@@ -212,7 +214,7 @@ class MockVideoProvider:
         content = (
             b"not-an-mp4"
             if attempt.mode == "corrupt"
-            else MOCK_VIDEO_FIXTURE.read_bytes()
+            else mock_video_fixture()
         )
         return PollResult(
             status=ProviderStatus.SUCCEEDED,

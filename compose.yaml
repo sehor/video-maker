@@ -88,6 +88,7 @@ services:
       AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:3000}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
       STORAGE_ROOT: /data/storage
+      STORAGE_CLAIM_SECRET: ${STORAGE_CLAIM_SECRET:-development-only-storage-claim-secret}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
@@ -113,6 +114,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       STORAGE_ROOT: /data/storage
+      STORAGE_CLAIM_SECRET: ${STORAGE_CLAIM_SECRET:-development-only-storage-claim-secret}
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888

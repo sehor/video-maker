@@ -43,6 +43,27 @@ def test_provider_module_has_no_orm_or_storage_dependencies() -> None:
     assert "app.storage" not in imports
 
 
+def test_provider_and_domain_layers_do_not_depend_on_local_paths() -> None:
+    app_root = Path(__file__).parents[1] / "app"
+    for module_name in ["provider.py", "provider_execution.py", "models.py", "schemas.py"]:
+        source = (app_root / module_name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imports = {
+            node.module or ""
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert "pathlib" not in imports
+        assert "LocalObjectStorage" not in source
+        assert "path_for(" not in source
+
+
 def test_failure_classification_is_explicit_and_closed() -> None:
     assert RETRYABLE_FAILURE_CODES == {
         FailureCode.NETWORK_TIMEOUT,
@@ -82,8 +103,13 @@ def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClie
         job.mock_mode = "submit_unknown"
         db.commit()
     provider = PendingOnceProvider()
+    settings = get_settings()
     executor = GenerationExecutionService(
-        LocalObjectStorage(get_settings().storage_root), provider=provider
+        LocalObjectStorage(
+            settings.storage_root,
+            settings.storage_claim_secret.get_secret_value().encode(),
+        ),
+        provider=provider,
     )
 
     asyncio.run(executor.execute(job_id))

@@ -1,13 +1,14 @@
 import base64
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from starlette.background import BackgroundTask
 
 from app.auth import CurrentUser
 from app.config import get_settings
@@ -75,7 +76,7 @@ from app.schemas import (
     WalletOut,
 )
 from app.state_machine import transition_attempt, transition_job
-from app.storage import LocalObjectStorage
+from app.storage import LocalObjectStorage, ObjectStorage, validate_media_header
 from app.workflow import HatchetWorkflowStarter
 
 router = APIRouter(prefix="/v1")
@@ -84,8 +85,27 @@ IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 workflow_starter = HatchetWorkflowStarter()
 
 
-def storage() -> LocalObjectStorage:
-    return LocalObjectStorage(get_settings().storage_root)
+def storage() -> ObjectStorage:
+    settings = get_settings()
+    return LocalObjectStorage(
+        settings.storage_root,
+        settings.storage_claim_secret.get_secret_value().encode(),
+    )
+
+
+def storage_claim_ttl() -> timedelta:
+    return timedelta(seconds=get_settings().storage_claim_ttl_seconds)
+
+
+def storage_response(store: ObjectStorage, key: str, media_type: str) -> StreamingResponse:
+    stat = store.stat(key)
+    source = store.open(store.read_claim(key, expires_in=storage_claim_ttl()))
+    return StreamingResponse(
+        source,
+        media_type=media_type,
+        headers={"Content-Length": str(stat.size_bytes)},
+        background=BackgroundTask(source.close),
+    )
 
 
 def provider_executor(
@@ -306,7 +326,17 @@ async def save_asset(
 ) -> ProjectAsset:
     owned_project(db, project_id, user.id)
     store = storage()
-    stored = await store.save_upload("assets", file, get_settings().max_upload_bytes)
+    mime_type = file.content_type or "application/octet-stream"
+    first = await file.read(16)
+    validate_media_header(mime_type, first)
+    claim = store.write_claim(
+        "assets",
+        mime_type=mime_type,
+        max_bytes=get_settings().max_upload_bytes,
+        expires_in=storage_claim_ttl(),
+    )
+    await file.seek(0)
+    stored = store.put(claim, file.file, mime_type)
     asset = ProjectAsset(
         project_id=project_id,
         owner_id=user.id,
@@ -348,7 +378,7 @@ async def upload_project_asset(
 
 
 @router.get("/assets/{asset_id}/content")
-def download_asset(asset_id: uuid.UUID, user: CurrentUser, db: Db) -> FileResponse:
+def download_asset(asset_id: uuid.UUID, user: CurrentUser, db: Db) -> Response:
     asset = db.scalar(
         select(ProjectAsset).where(
             ProjectAsset.id == asset_id,
@@ -358,7 +388,7 @@ def download_asset(asset_id: uuid.UUID, user: CurrentUser, db: Db) -> FileRespon
     )
     if asset is None:
         raise not_found("asset")
-    return FileResponse(storage().path_for(asset.object_key), media_type=asset.media_type)
+    return storage_response(storage(), asset.object_key, asset.media_type)
 
 
 def load_job(db: Session, job_id: uuid.UUID, owner_id: uuid.UUID) -> GenerationJob:
@@ -812,7 +842,7 @@ def list_jobs(user: CurrentUser, db: Db) -> GenerationJobList:
 
 
 @router.get("/outputs/{output_id}/content")
-def download_output(output_id: uuid.UUID, user: CurrentUser, db: Db) -> FileResponse:
+def download_output(output_id: uuid.UUID, user: CurrentUser, db: Db) -> Response:
     output = db.scalar(
         select(GenerationOutput)
         .join(GenerationJob, GenerationOutput.job_id == GenerationJob.id)
@@ -826,4 +856,4 @@ def download_output(output_id: uuid.UUID, user: CurrentUser, db: Db) -> FileResp
         raise not_found("output")
     if output.validation_status != OutputValidationStatus.VALID:
         raise ApiError(422, "OUTPUT_INVALID", "该输出未通过媒体校验")
-    return FileResponse(storage().path_for(output.object_key), media_type=output.media_type)
+    return storage_response(storage(), output.object_key, output.media_type)
