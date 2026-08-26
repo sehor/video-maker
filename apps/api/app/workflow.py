@@ -2,7 +2,19 @@ import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.provider import MockVideoProvider
+import structlog
+from hatchet_sdk.exceptions import IdempotencyCollisionError
+from pydantic import BaseModel, ConfigDict, Field
+
+logger = structlog.get_logger()
+
+
+class GenerationWorkflowInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: uuid.UUID
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    payload: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,12 +37,53 @@ class WorkflowStarter(Protocol):
         ...
 
 
-class MockWorkflowStarter:
-    """Stage-two adapter that keeps the orchestration boundary free of Hatchet."""
+class HatchetWorkflowRunnable(Protocol):
+    async def aio_run(
+        self,
+        input: GenerationWorkflowInput,
+        *,
+        wait_for_result: bool,
+    ) -> object: ...
 
-    def __init__(self, provider: MockVideoProvider) -> None:
-        self.provider = provider
+
+class HatchetWorkflowStarter:
+    """Starts the durable generation workflow through the pinned Hatchet SDK."""
+
+    def __init__(self, workflow: HatchetWorkflowRunnable | None = None) -> None:
+        self._workflow = workflow
+
+    def _get_workflow(self) -> HatchetWorkflowRunnable:
+        if self._workflow is None:
+            from app.hatchet_workflows import generation_workflow
+
+            self._workflow = generation_workflow
+        return self._workflow
 
     async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
-        await self.provider.submit(request.job_id)
-        return WorkflowStartResult(workflow_id=request.idempotency_key)
+        workflow_input = GenerationWorkflowInput(
+            job_id=request.job_id,
+            idempotency_key=request.idempotency_key,
+            payload=request.payload,
+        )
+        try:
+            reference = await self._get_workflow().aio_run(
+                workflow_input,
+                wait_for_result=False,
+            )
+            workflow_id = getattr(reference, "workflow_run_id", None)
+            reused = False
+        except IdempotencyCollisionError as exc:
+            workflow_id = exc.existing_run_external_id
+            reused = True
+
+        if not isinstance(workflow_id, str) or not workflow_id:
+            raise RuntimeError("Hatchet returned an invalid workflow run reference")
+
+        logger.info(
+            "hatchet.workflow_accepted",
+            job_id=str(request.job_id),
+            workflow_key=request.idempotency_key,
+            workflow_id=workflow_id,
+            reused=reused,
+        )
+        return WorkflowStartResult(workflow_id=workflow_id)

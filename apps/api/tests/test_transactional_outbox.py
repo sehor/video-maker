@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-import app.api as api_module
 import app.main as main_module
 from app.db import SessionLocal
 from app.models import (
@@ -23,6 +22,13 @@ from app.models import (
 from app.outbox import DispatchResult, OutboxDispatcher, generation_workflow_key
 from app.workflow import WorkflowStartRequest, WorkflowStartResult
 from tests.test_mock_jobs import create_shot
+
+
+@pytest.fixture
+def client(raw_client: TestClient) -> TestClient:
+    """Outbox tests inspect pending rows before any dispatcher runs."""
+
+    return raw_client
 
 
 class SimulatedCrash(BaseException):
@@ -77,11 +83,7 @@ class CrashAfterSendDispatcher(OutboxDispatcher):
         raise SimulatedCrash
 
 
-def create_pending_job(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> dict:
-    async def leave_for_dispatcher() -> None:
-        return None
-
-    monkeypatch.setattr(api_module, "dispatch_generation_outbox", leave_for_dispatcher)
+def create_pending_job(client: TestClient) -> dict:
     shot = create_shot(client)
     granted = client.post(
         "/v1/wallet/test-grants",
@@ -116,10 +118,8 @@ def load_outbox(job_id: str) -> OutboxEvent:
         return event
 
 
-def test_job_reservation_and_outbox_commit_together(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    job = create_pending_job(client, monkeypatch)
+def test_job_reservation_and_outbox_commit_together(client: TestClient) -> None:
+    job = create_pending_job(client)
     with SessionLocal() as db:
         stored_job = db.get(GenerationJob, uuid.UUID(job["id"]))
         event = db.scalar(
@@ -166,10 +166,8 @@ def test_job_reservation_and_outbox_commit_together(
         assert db.get(Quote, uuid.UUID(quoted.json()["id"])).status == QuoteStatus.OPEN
 
 
-def test_timeout_and_duplicate_publish_reuse_one_business_workflow(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    job = create_pending_job(client, monkeypatch)
+def test_timeout_and_duplicate_publish_reuse_one_business_workflow(client: TestClient) -> None:
+    job = create_pending_job(client)
     starter = FakeWorkflowStarter("accepted_then_timeout")
     first = OutboxDispatcher(SessionLocal, starter, retry_delay=timedelta(0))
     assert asyncio.run(first.dispatch_once()) == DispatchResult.RETRY_SCHEDULED
@@ -190,11 +188,10 @@ def test_timeout_and_duplicate_publish_reuse_one_business_workflow(
 )
 def test_dispatcher_recovers_crash_windows_after_lease_expiry(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
     dispatcher_type: type[OutboxDispatcher],
     created_before_restart: int,
 ) -> None:
-    job = create_pending_job(client, monkeypatch)
+    job = create_pending_job(client)
     clock = MutableClock(datetime.now(UTC))
     starter = FakeWorkflowStarter()
     crashed = dispatcher_type(
@@ -220,10 +217,8 @@ def test_dispatcher_recovers_crash_windows_after_lease_expiry(
     assert starter.created_count == 1
 
 
-def test_concurrent_dispatchers_claim_an_event_once(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    job = create_pending_job(client, monkeypatch)
+def test_concurrent_dispatchers_claim_an_event_once(client: TestClient) -> None:
+    job = create_pending_job(client)
     starter = FakeWorkflowStarter()
     dispatchers = [OutboxDispatcher(SessionLocal, starter) for _ in range(2)]
     with ThreadPoolExecutor(max_workers=2) as pool:

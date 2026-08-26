@@ -14,8 +14,74 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
+  hatchet-db-init:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-video_factory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_factory_dev}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until pg_isready -h postgres -U "$$POSTGRES_USER" -d postgres; do sleep 1; done
+        if ! PGPASSWORD="$$POSTGRES_PASSWORD" psql -h postgres -U "$$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'hatchet'" | grep -q 1; then
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql -h postgres -U "$$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE hatchet"
+        fi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  hatchet:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.105.2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-video_factory}:${POSTGRES_PASSWORD:-video_factory_dev}@postgres:5432/hatchet?sslmode=disable
+      SERVER_AUTH_COOKIE_DOMAIN: localhost
+      SERVER_AUTH_COOKIE_INSECURE: "true"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "true"
+      SERVER_GRPC_BIND_ADDRESS: 0.0.0.0
+      SERVER_GRPC_BROADCAST_ADDRESS: hatchet:7077
+      SERVER_GRPC_INSECURE: "true"
+      SERVER_GRPC_PORT: "7077"
+      SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: localhost:7077
+      SERVER_URL: http://localhost:8888
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8733/ready || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    depends_on:
+      hatchet-db-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:7077:7077"
+      - "127.0.0.1:8888:8888"
+    volumes:
+      - hatchet-config:/config
+
+  hatchet-token-init:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.105.2
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-video_factory}:${POSTGRES_PASSWORD:-video_factory_dev}@postgres:5432/hatchet?sslmode=disable
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        if [ ! -s /hatchet-auth/token ]; then
+          umask 077
+          ./hatchet-admin token create --config ./config --tenant-id 707d0855-80ab-4e1f-a156-f1c4546cbf52 --expiresIn 876000h > /hatchet-auth/token.tmp
+          test -s /hatchet-auth/token.tmp
+          mv /hatchet-auth/token.tmp /hatchet-auth/token
+        fi
+    depends_on:
+      hatchet:
+        condition: service_healthy
+    volumes:
+      - hatchet-config:/config
+      - hatchet-auth:/hatchet-auth
+
   api:
     build: ./apps/api
+    restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://web:3000/api/auth/jwks}
@@ -23,16 +89,43 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
       STORAGE_ROOT: /data/storage
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
+      HATCHET_CLIENT_HOST_PORT: hatchet:7077
+      HATCHET_SERVER_URL: http://hatchet:8888
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       postgres:
         condition: service_healthy
+      hatchet-token-init:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
       - ./apps/api:/app
       - ./packages/api-client:/packages/api-client
       - local-storage:/data/storage
+      - hatchet-auth:/hatchet-auth:ro
+
+  hatchet-worker:
+    build: ./apps/api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
+      STORAGE_ROOT: /data/storage
+      HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
+      HATCHET_CLIENT_HOST_PORT: hatchet:7077
+      HATCHET_SERVER_URL: http://hatchet:8888
+      OUTBOX_DISPATCHER_ENABLED: "false"
+    command: python -m app.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hatchet-token-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./apps/api:/app
+      - local-storage:/data/storage
+      - hatchet-auth:/hatchet-auth:ro
 
   web:
     build:
@@ -58,5 +151,7 @@ services:
 
 volumes:
   postgres-data:
+  hatchet-config:
+  hatchet-auth:
   local-storage:
   web-node-modules:

@@ -59,12 +59,15 @@ wsl.exe -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/projects/video-maker && docker co
 | 服务 | 容器端口 | Windows 访问 | 说明 |
 |---|---:|---:|---|
 | `postgres` | 5432 | 不映射 | 只在 Compose 内网供 API/Web 使用 |
+| `hatchet` | 7077 | `127.0.0.1:7077` | Hatchet SDK gRPC，仅绑定本机 |
+| `hatchet` | 8888 | `http://127.0.0.1:8888` | Hatchet Dashboard，仅绑定本机 |
 | `api` | 8000 | `http://localhost:8000` | Compose 启动完整栈时映射 |
 | `web` | 3000 | `http://localhost:3000` | Compose 启动完整栈时映射 |
+| `hatchet-worker` | 8000 | 不映射 | 只连接 Compose 内网的 API 数据库与 Hatchet |
 
 ## 3. 项目永久资源与启动预检
 
-截至 2026-08-25，项目 PostgreSQL 基线如下：
+截至 2026-08-26，项目 PostgreSQL 基线如下：
 
 | 项目 | 当前值 |
 |---|---|
@@ -75,8 +78,8 @@ wsl.exe -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/projects/video-maker && docker co
 | restart policy | `unless-stopped` |
 | named volume | `video-maker_postgres-data` |
 | 数据挂载 | `/var/lib/postgresql/data` |
-| 数据库／用户 | `video_factory`／`video_factory` |
-| Alembic 版本 | `0002_core_domain_contract` |
+| 数据库／用户 | 业务库 `video_factory`、Hatchet 库 `hatchet`／`video_factory` |
+| Alembic 版本 | `0005_transactional_outbox` |
 
 每次 Docker 或数据库任务按以下顺序执行：
 
@@ -112,13 +115,17 @@ wsl.exe -d Ubuntu-22.04 -- docker compose `
 
 项目 PostgreSQL 始终由 Compose service `postgres` 管理。不要用 `docker run postgres...`
 另建项目数据库容器；测试迁移优先在现有 PostgreSQL 内创建隔离测试数据库。
+Hatchet 通过一次性 `hatchet-db-init` 在同一 PostgreSQL 实例中幂等创建独立 `hatchet`
+数据库；`hatchet-token-init` 将本地开发 token 原子写入 `hatchet-auth` volume。两者均由
+Compose 管理，不另建长期 PostgreSQL 容器。
 
 ## 4. 数据在哪里
 
 - 项目代码仍在 Windows `E:\projects\video-maker`，WSL 路径为 `/mnt/e/projects/video-maker`。
 - Docker Engine 的镜像、容器层、网络和 named volume 保存在 WSL 的 Docker root：`/var/lib/docker`，实际位于 Ubuntu 的 WSL 虚拟磁盘中。
 - 项目 PostgreSQL volume 为 `video-maker_postgres-data`，挂载点为 `/var/lib/docker/volumes/video-maker_postgres-data/_data`。
-- `local-storage` 和 `web-node-modules` 也是 Compose named volume，不在 E: 代码目录中。
+- `hatchet-config`、`hatchet-auth`、`local-storage` 和 `web-node-modules` 也是 Compose named
+  volume，不在 E: 代码目录中。
 - 将数据库和上传/结果数据放在 WSL named volume；不要把 PostgreSQL 数据目录 bind mount 到 `/mnt/e`。
 
 代码放在 E: 便于 Windows 工具访问，当前项目可正常运行。若后续大量 Linux 文件扫描、依赖安装或热重载出现性能问题，再考虑把完整工作树迁移到 `~/src/video-maker`；这不是本次环境配置的必要条件。
@@ -144,7 +151,8 @@ cd /mnt/e/projects/video-maker
 docker compose ps -a
 docker compose start postgres       # 日常恢复现有 PostgreSQL
 docker compose up -d                # 需要完整栈时创建/启动缺失服务
-docker compose up -d --build api web # 仅 Dockerfile/依赖变化时重建
+docker compose up -d --build api hatchet-worker web # 仅依赖或 Dockerfile 变化时重建
+docker compose logs -f hatchet hatchet-worker
 docker compose logs -f postgres
 docker compose stop                 # 停止并保留现有容器
 docker compose down                 # 删除容器，保留 named volumes
