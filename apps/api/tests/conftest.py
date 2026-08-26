@@ -23,7 +23,7 @@ from app.config import get_settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.outbox import DispatchResult, OutboxDispatcher  # noqa: E402
-from app.provider import MockVideoProvider  # noqa: E402
+from app.provider_execution import GenerationExecutionService  # noqa: E402
 from app.storage import LocalObjectStorage  # noqa: E402
 from app.workflow import WorkflowStartRequest, WorkflowStartResult  # noqa: E402
 
@@ -57,8 +57,8 @@ class InlineWorkflowStarter:
     """Runs the Hatchet child boundary in-process for Docker-free unit tests."""
 
     async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
-        provider = MockVideoProvider(LocalObjectStorage(get_settings().storage_root))
-        await provider.submit(request.job_id)
+        executor = GenerationExecutionService(LocalObjectStorage(get_settings().storage_root))
+        await executor.execute(request.job_id)
         return WorkflowStartResult(workflow_id=f"test:{request.idempotency_key}")
 
 

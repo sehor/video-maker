@@ -18,7 +18,7 @@ from app.models import (
     SettlementStatus,
     WalletBalance,
 )
-from app.provider import MockVideoProvider
+from app.provider_execution import GenerationExecutionService
 from tests.test_mock_jobs import create_shot
 
 
@@ -68,7 +68,7 @@ def test_quote_snapshot_keeps_its_price_when_catalog_changes(
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     first = quote(client, shot["id"])
     assert first["reserved_ms"] == 2_000
@@ -182,7 +182,7 @@ def test_insufficient_balance_rolls_back_quote_and_job(client: TestClient, monke
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     grant(client, 1_000)
     item = quote(client, shot["id"])
@@ -200,7 +200,7 @@ def test_competing_submissions_cannot_overdraw(client: TestClient, monkeypatch) 
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     grant(client, 2_000)
     quotes = [quote(client, shot["id"]) for _ in range(2)]
@@ -238,7 +238,7 @@ def test_quote_cannot_cross_user_boundary(client: TestClient, monkeypatch) -> No
     async def stay_queued(self, job_id):
         return None
 
-    monkeypatch.setattr(MockVideoProvider, "submit", stay_queued)
+    monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
     item = quote(client, shot["id"])
     response = client.post(

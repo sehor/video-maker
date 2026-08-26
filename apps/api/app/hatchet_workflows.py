@@ -11,7 +11,7 @@ from hatchet_sdk import (
 from hatchet_sdk.config import ClientConfig, ClientTLSConfig
 
 from app.config import get_settings
-from app.provider import MockVideoProvider
+from app.provider_execution import GenerationExecutionService
 from app.storage import LocalObjectStorage
 from app.workflow import GenerationWorkflowInput
 
@@ -67,7 +67,9 @@ async def generation_submit(
         child_key=f"job:{input.job_id}:submit:v1",
     )
     settings = get_settings()
-    await MockVideoProvider(LocalObjectStorage(settings.storage_root)).submit(input.job_id)
+    await GenerationExecutionService(LocalObjectStorage(settings.storage_root)).execute(
+        input.job_id
+    )
     logger.info(
         "hatchet.child_completed",
         job_id=str(input.job_id),

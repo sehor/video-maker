@@ -1,0 +1,106 @@
+import ast
+import asyncio
+import uuid
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.db import SessionLocal
+from app.models import GenerationJob
+from app.provider import (
+    RETRYABLE_FAILURE_CODES,
+    FailureCode,
+    MockVideoProvider,
+    PollResult,
+    ProviderStatus,
+    is_retryable_failure,
+)
+from app.provider_execution import AttemptBudget, GenerationExecutionService
+from app.storage import LocalObjectStorage
+from tests.test_mock_jobs import create_shot, generate
+
+
+def test_provider_module_has_no_orm_or_storage_dependencies() -> None:
+    provider_path = Path(__file__).parents[1] / "app" / "provider.py"
+    tree = ast.parse(provider_path.read_text(encoding="utf-8"))
+    imports = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imports.update(
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    )
+    assert not any(
+        name == "sqlalchemy" or name.startswith("sqlalchemy.") for name in imports
+    )
+    assert "app.db" not in imports
+    assert "app.models" not in imports
+    assert "app.storage" not in imports
+
+
+def test_failure_classification_is_explicit_and_closed() -> None:
+    assert RETRYABLE_FAILURE_CODES == {
+        FailureCode.NETWORK_TIMEOUT,
+        FailureCode.PROVIDER_5XX,
+        FailureCode.PROVIDER_CAPACITY,
+        FailureCode.QUEUE_TIMEOUT,
+        FailureCode.WORKER_INTERRUPTED,
+    }
+    assert is_retryable_failure(FailureCode.NETWORK_TIMEOUT)
+    assert not is_retryable_failure(FailureCode.WORKFLOW_FAILED)
+    assert not is_retryable_failure(FailureCode.INVALID_INPUT)
+
+
+def test_attempt_budget_enforces_candidate_and_job_limits() -> None:
+    assert AttemptBudget(total_attempts=2, candidate_attempts=1).allows_retry
+    assert not AttemptBudget(total_attempts=2, candidate_attempts=2).allows_retry
+    assert not AttemptBudget(total_attempts=3, candidate_attempts=1).allows_retry
+
+
+def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClient) -> None:
+    class PendingOnceProvider(MockVideoProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.poll_calls = 0
+
+        async def poll(self, attempt):
+            self.poll_calls += 1
+            if self.poll_calls == 1:
+                return PollResult(status=ProviderStatus.UNKNOWN)
+            return await super().poll(attempt)
+
+    queued = generate(raw_client, create_shot(raw_client)["id"], "success")
+    job_id = uuid.UUID(queued["id"])
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, job_id)
+        assert job is not None
+        job.mock_mode = "submit_unknown"
+        db.commit()
+    provider = PendingOnceProvider()
+    executor = GenerationExecutionService(
+        LocalObjectStorage(get_settings().storage_root), provider=provider
+    )
+
+    asyncio.run(executor.execute(job_id))
+    reconciling = raw_client.get(f"/v1/generations/{queued['id']}").json()
+    assert reconciling["status"] == "ROUTING"
+    assert reconciling["attempts"][0]["status"] == "SUBMITTING"
+    assert len(provider.submit_calls) == 1
+
+    asyncio.run(executor.execute(job_id))
+
+    refreshed = raw_client.get(f"/v1/generations/{queued['id']}").json()
+    assert refreshed["status"] == "SUCCEEDED"
+    assert len(refreshed["attempts"]) == 1
+    assert len(provider.submit_calls) == 1
+    assert provider.poll_calls == 2
+    assert {event["event_type"] for event in refreshed["events"]} >= {
+        "provider.submit_unknown",
+        "provider.reconciled",
+        "attempt.reconciled",
+    }
