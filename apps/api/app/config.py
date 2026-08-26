@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     auth_audience: str = "video-factory-api"
     storage_root: Path = Path("./data/storage")
     max_upload_bytes: int = 50 * 1024 * 1024
+    hatchet_client_token_file: Path | None = None
+    hatchet_client_host_port: str = "localhost:7077"
+    hatchet_server_url: str = "http://localhost:8888"
     outbox_dispatcher_enabled: bool = True
     outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]

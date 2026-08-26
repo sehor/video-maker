@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -40,7 +40,6 @@ from app.models import (
     ShotReference,
 )
 from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
-from app.provider import MockVideoProvider
 from app.schemas import (
     GenerationCreate,
     GenerationJobList,
@@ -65,11 +64,12 @@ from app.schemas import (
 )
 from app.state_machine import transition_attempt, transition_job
 from app.storage import LocalObjectStorage
-from app.workflow import MockWorkflowStarter
+from app.workflow import HatchetWorkflowStarter
 
 router = APIRouter(prefix="/v1")
 Db = Annotated[Session, Depends(get_db)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
+workflow_starter = HatchetWorkflowStarter()
 
 
 def storage() -> LocalObjectStorage:
@@ -77,8 +77,7 @@ def storage() -> LocalObjectStorage:
 
 
 async def dispatch_generation_outbox() -> DispatchResult:
-    starter = MockWorkflowStarter(MockVideoProvider(storage()))
-    return await OutboxDispatcher(SessionLocal, starter).dispatch_once()
+    return await OutboxDispatcher(SessionLocal, workflow_starter).dispatch_once()
 
 
 def encode_cursor(created_at: str, item_id: uuid.UUID) -> str:
@@ -482,7 +481,6 @@ def list_ledger_transactions(
 @router.post("/generations", response_model=GenerationJobOut, status_code=202)
 def generate(
     payload: GenerationCreate,
-    background: BackgroundTasks,
     user: CurrentUser,
     db: Db,
     idempotency_key: IdempotencyKey = None,
@@ -496,7 +494,6 @@ def generate(
     )
     replay_id = replay_result_id(decision, "generation_job")
     if replay_id is not None:
-        background.add_task(dispatch_generation_outbox)
         return load_job(db, replay_id, user.id)
     shot = db.scalar(
         select(Shot).join(Project).where(Shot.id == payload.shot_id, Project.owner_id == user.id)
@@ -540,7 +537,6 @@ def generate(
         response_status=202,
     )
     db.commit()
-    background.add_task(dispatch_generation_outbox)
     return load_job(db, job.id, user.id)
 
 
