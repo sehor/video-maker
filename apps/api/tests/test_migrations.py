@@ -40,6 +40,7 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "ledger_postings",
         "api_idempotency_records",
         "outbox_events",
+        "provider_event_inbox",
     } <= tables
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
     with engine.connect() as connection:
@@ -122,6 +123,22 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         "uq_outbox_events_idempotency_key",
     } <= {
         constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")
+    }
+    assert {
+        "provider_code",
+        "external_event_id",
+        "provider_job_id",
+        "payload_hash",
+        "status",
+        "attempt_id",
+        "job_id",
+        "locked_at",
+        "lock_token",
+        "processed_at",
+    } <= {column["name"] for column in inspector.get_columns("provider_event_inbox")}
+    assert "uq_provider_event_inbox_external_event" in {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("provider_event_inbox")
     }
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM quality_tiers")) == 3

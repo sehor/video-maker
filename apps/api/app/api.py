@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -40,6 +40,12 @@ from app.models import (
     ShotReference,
 )
 from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
+from app.provider import (
+    MockVideoProvider,
+    WebhookVerificationError,
+    WebhookVerificationRequest,
+)
+from app.provider_execution import GenerationExecutionService
 from app.schemas import (
     GenerationCreate,
     GenerationJobList,
@@ -51,6 +57,7 @@ from app.schemas import (
     ProjectList,
     ProjectOut,
     ProjectUpdate,
+    ProviderWebhookAck,
     QuoteCreate,
     QuoteOut,
     ShotCreate,
@@ -74,6 +81,19 @@ workflow_starter = HatchetWorkflowStarter()
 
 def storage() -> LocalObjectStorage:
     return LocalObjectStorage(get_settings().storage_root)
+
+
+def provider_executor(
+    provider_code: str, *, require_webhook_secret: bool = False
+) -> GenerationExecutionService:
+    if provider_code != "mock":
+        raise not_found("provider")
+    secret = get_settings().mock_provider_webhook_secret
+    if require_webhook_secret and secret is None:
+        raise ApiError(503, "PROVIDER_WEBHOOK_DISABLED", "Provider webhook 未配置")
+    return GenerationExecutionService(
+        storage(), provider=MockVideoProvider(webhook_secret=secret)
+    )
 
 
 async def dispatch_generation_outbox() -> DispatchResult:
@@ -545,8 +565,41 @@ def get_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJo
     return load_job(db, job_id, user.id)
 
 
+@router.post(
+    "/provider-webhooks/{provider_code}",
+    response_model=ProviderWebhookAck,
+    status_code=202,
+)
+async def receive_provider_webhook(
+    provider_code: str,
+    request: Request,
+) -> ProviderWebhookAck:
+    max_bytes = get_settings().provider_webhook_max_bytes
+    parts: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > max_bytes:
+            raise ApiError(413, "PROVIDER_WEBHOOK_TOO_LARGE", "Provider webhook 请求过大")
+        parts.append(chunk)
+    body = b"".join(parts)
+    executor = provider_executor(provider_code, require_webhook_secret=True)
+    try:
+        result = await executor.handle_webhook(
+            provider_code,
+            WebhookVerificationRequest(headers=request.headers, body=body),
+        )
+    except WebhookVerificationError as exc:
+        raise ApiError(
+            401,
+            "PROVIDER_WEBHOOK_INVALID",
+            "Provider webhook 验证失败",
+        ) from exc
+    return ProviderWebhookAck(event_id=result.event_id, status=result.status)
+
+
 @router.post("/generations/{job_id}/cancel", response_model=GenerationJobOut)
-def cancel_generation(
+async def cancel_generation(
     job_id: uuid.UUID,
     user: CurrentUser,
     db: Db,
@@ -563,30 +616,54 @@ def cancel_generation(
     if replay_id is not None:
         return load_job(db, replay_id, user.id)
     job = load_job(db, job_id, user.id)
-    if job.status not in {JobStatus.CREATED, JobStatus.RESERVED, JobStatus.QUEUED}:
+    if job.status in {
+        JobStatus.SUCCEEDED,
+        JobStatus.FAILED_FINAL,
+        JobStatus.CANCELLED,
+        JobStatus.EXPIRED,
+        JobStatus.REJECTED_POLICY,
+        JobStatus.POSTPROCESSING,
+        JobStatus.VALIDATING,
+    }:
         raise ApiError(409, "JOB_NOT_CANCELLABLE", "当前任务状态不能取消")
-    if not transition_job(
-        db, job, JobStatus.CANCELLED, "job.cancelled", f"job:{job.id}:cancelled:v1"
-    ):
-        raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
-    job.finished_at = datetime.now(UTC)
-    for attempt in job.attempts:
-        if attempt.status not in {
-            AttemptStatus.SUCCEEDED,
-            AttemptStatus.FAILED_RETRYABLE,
-            AttemptStatus.FAILED_FINAL,
-            AttemptStatus.CANCELLED,
-            AttemptStatus.TIMED_OUT,
-        } and not transition_attempt(
+    submitted = job.status in {
+        JobStatus.ROUTING,
+        JobStatus.SUBMITTED,
+        JobStatus.RUNNING,
+        JobStatus.CANCEL_REQUESTED,
+    }
+    if submitted:
+        if job.status != JobStatus.CANCEL_REQUESTED and not transition_job(
             db,
-            attempt,
-            AttemptStatus.CANCELLED,
-            "attempt.cancelled",
-            f"attempt:{attempt.id}:cancelled:v1",
+            job,
+            JobStatus.CANCEL_REQUESTED,
+            "job.cancel_requested",
+            f"job:{job.id}:cancel-requested:v1",
         ):
-            raise ApiError(409, "ATTEMPT_STATE_CONFLICT", "任务尝试状态已变化")
-    if job.settlement_status == SettlementStatus.RESERVED:
-        finish_reservation(db, job, settle=False)
+            raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+    else:
+        if not transition_job(
+            db, job, JobStatus.CANCELLED, "job.cancelled", f"job:{job.id}:cancelled:v1"
+        ):
+            raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+        job.finished_at = datetime.now(UTC)
+        for attempt in job.attempts:
+            if attempt.status not in {
+                AttemptStatus.SUCCEEDED,
+                AttemptStatus.FAILED_RETRYABLE,
+                AttemptStatus.FAILED_FINAL,
+                AttemptStatus.CANCELLED,
+                AttemptStatus.TIMED_OUT,
+            } and not transition_attempt(
+                db,
+                attempt,
+                AttemptStatus.CANCELLED,
+                "attempt.cancelled",
+                f"attempt:{attempt.id}:cancelled:v1",
+            ):
+                raise ApiError(409, "ATTEMPT_STATE_CONFLICT", "任务尝试状态已变化")
+        if job.settlement_status == SettlementStatus.RESERVED:
+            finish_reservation(db, job, settle=False)
     complete(
         db,
         decision.record,
@@ -595,6 +672,9 @@ def cancel_generation(
         response_status=200,
     )
     db.commit()
+    if submitted:
+        await provider_executor(job.attempts[-1].provider_code).request_cancel(job.id)
+        db.expire_all()
     return load_job(db, job.id, user.id)
 
 

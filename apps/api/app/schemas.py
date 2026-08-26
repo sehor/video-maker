@@ -9,6 +9,7 @@ from app.models import (
     JobStatus,
     OutputValidationStatus,
     ProjectAssetStatus,
+    ProviderEventInboxStatus,
     QuoteStatus,
     SettlementStatus,
 )
@@ -267,3 +268,8 @@ class GenerationJobOut(OrmModel):
 class GenerationJobList(BaseModel):
     items: list[GenerationJobOut]
     next_cursor: str | None = None
+
+
+class ProviderWebhookAck(BaseModel):
+    event_id: str
+    status: ProviderEventInboxStatus

@@ -9,5 +9,6 @@ describe('isTerminalStatus', () => {
     expect(isTerminalStatus('EXPIRED')).toBe(true)
     expect(isTerminalStatus('REJECTED_POLICY')).toBe(true)
     expect(isTerminalStatus('RUNNING')).toBe(false)
+    expect(isTerminalStatus('CANCEL_REQUESTED')).toBe(false)
   })
 })

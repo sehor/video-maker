@@ -1,8 +1,11 @@
+import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+import structlog
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db import SessionLocal
@@ -15,6 +18,8 @@ from app.models import (
     JobEvent,
     JobStatus,
     OutputValidationStatus,
+    ProviderEventInbox,
+    ProviderEventInboxStatus,
     Shot,
 )
 from app.provider import (
@@ -22,12 +27,14 @@ from app.provider import (
     MockVideoProvider,
     PollResult,
     ProviderAttempt,
+    ProviderEvent,
     ProviderFailure,
     ProviderOutput,
     ProviderStatus,
     SubmitDisposition,
     SubmitRequest,
     VideoProvider,
+    WebhookVerificationRequest,
     is_retryable_failure,
 )
 from app.state_machine import transition_attempt, transition_job
@@ -35,6 +42,8 @@ from app.storage import LocalObjectStorage
 
 MAX_ATTEMPTS_PER_CANDIDATE = 2
 MAX_ATTEMPTS_PER_JOB = 3
+PROVIDER_EVENT_LEASE = timedelta(minutes=5)
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +85,12 @@ class AttemptContext:
             provider_job_id=self.provider_job_id,
             mode=self.mode,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderWebhookResult:
+    event_id: str
+    status: ProviderEventInboxStatus
 
 
 class GenerationExecutionService:
@@ -138,40 +153,93 @@ class GenerationExecutionService:
             except Exception:
                 self._record_reconcile_pending(context)
                 return
-            if result.provider_job_id and context.provider_job_id is None:
-                self._record_submit_accepted(context, result.provider_job_id, reconciled=True)
-                context = self._load_active_attempt(job_id)
-                if context is None:
-                    return
-            if result.status in {ProviderStatus.PENDING, ProviderStatus.RUNNING}:
+            if not self._apply_provider_result(context, result):
                 return
-            if result.status == ProviderStatus.UNKNOWN:
-                self._record_reconcile_pending(context)
-                return
-            if result.status == ProviderStatus.SUCCEEDED:
-                if result.output is None:
-                    result = PollResult(
-                        status=ProviderStatus.FAILED,
-                        provider_job_id=result.provider_job_id,
-                        failure=ProviderFailure(
-                            FailureCode.OUTPUT_MISSING, "Provider 未返回输出"
-                        ),
-                    )
-                else:
-                    self._finish_output(context, result.output)
-                    return
-            if result.status == ProviderStatus.CANCELLED:
-                result = PollResult(
-                    status=ProviderStatus.FAILED,
-                    provider_job_id=result.provider_job_id,
-                    failure=ProviderFailure(FailureCode.USER_CANCELLED, "Provider 已取消任务"),
-                )
-            if result.status == ProviderStatus.FAILED:
-                failure = result.failure or ProviderFailure(
-                    FailureCode.INTERNAL_ERROR, "Provider 返回未分类错误"
-                )
-                if not self._fail_attempt(context, failure):
-                    return
+
+    async def request_cancel(self, job_id: uuid.UUID) -> None:
+        context = self._load_active_attempt(job_id)
+        if context is None:
+            return
+        try:
+            result = await self._provider.cancel(context.provider_attempt())
+        except Exception as exc:
+            logger.warning(
+                "provider.cancel_failed",
+                job_id=str(job_id),
+                attempt_id=str(context.attempt_id),
+                provider=context.provider_code,
+                error_type=type(exc).__name__,
+            )
+            return
+        logger.info(
+            "provider.cancel_result",
+            job_id=str(job_id),
+            attempt_id=str(context.attempt_id),
+            provider=context.provider_code,
+            accepted=result.accepted,
+            provider_status=result.status.value,
+        )
+        if result.status == ProviderStatus.CANCELLED:
+            self._apply_provider_result(
+                context,
+                PollResult(
+                    status=ProviderStatus.CANCELLED,
+                    provider_job_id=context.provider_job_id,
+                ),
+            )
+
+    async def handle_webhook(
+        self,
+        provider_code: str,
+        request: WebhookVerificationRequest,
+    ) -> ProviderWebhookResult:
+        event = await self._provider.verify_webhook(request)
+        event_id, lock_token = self._receive_provider_event(
+            provider_code, request.body, event
+        )
+        if lock_token is None:
+            return self._webhook_result(event_id)
+
+        context = self._load_attempt_by_provider_job(
+            provider_code, event.provider_job_id
+        )
+        if context is None:
+            self._reset_provider_event(event_id, lock_token)
+            return self._webhook_result(event_id)
+
+        try:
+            result = await self._result_for_event(context, event)
+        except Exception as exc:
+            self._reset_provider_event(event_id, lock_token)
+            logger.warning(
+                "provider.webhook_reconcile_failed",
+                event_id=event.event_id,
+                provider=provider_code,
+                attempt_id=str(context.attempt_id),
+                error_type=type(exc).__name__,
+            )
+            return self._webhook_result(event_id)
+
+        self._apply_provider_result(context, result)
+        if event.status in {
+            ProviderStatus.SUCCEEDED,
+            ProviderStatus.FAILED,
+        } and result.status in {
+            ProviderStatus.PENDING,
+            ProviderStatus.RUNNING,
+            ProviderStatus.UNKNOWN,
+        }:
+            self._reset_provider_event(event_id, lock_token)
+            return self._webhook_result(event_id)
+        self._finish_provider_event(event_id, lock_token, context)
+        logger.info(
+            "provider.webhook_processed",
+            event_id=event.event_id,
+            provider=provider_code,
+            attempt_id=str(context.attempt_id),
+            provider_status=event.status.value,
+        )
+        return self._webhook_result(event_id)
 
     def _load_active_attempt(self, job_id: uuid.UUID) -> AttemptContext | None:
         with self._session_factory() as db:
@@ -206,6 +274,210 @@ class GenerationExecutionService:
                 resolution=job.resolution,
                 mode=job.mock_mode,
                 status=attempt.status,
+            )
+
+    def _load_attempt_by_provider_job(
+        self, provider_code: str, provider_job_id: str
+    ) -> AttemptContext | None:
+        with self._session_factory() as db:
+            attempt = db.scalar(
+                select(GenerationAttempt).where(
+                    GenerationAttempt.provider_code == provider_code,
+                    GenerationAttempt.provider_job_id == provider_job_id,
+                )
+            )
+            if attempt is None:
+                return None
+            job = db.get(GenerationJob, attempt.job_id)
+            shot = db.get(Shot, job.shot_id) if job is not None else None
+            if job is None or shot is None:
+                return None
+            return AttemptContext(
+                job_id=job.id,
+                attempt_id=attempt.id,
+                provider_code=attempt.provider_code,
+                provider_job_id=attempt.provider_job_id,
+                workflow_version=attempt.workflow_version,
+                prompt=shot.prompt,
+                negative_prompt=None,
+                duration_ms=job.duration_ms,
+                aspect_ratio=job.aspect_ratio,
+                resolution=job.resolution,
+                mode=job.mock_mode,
+                status=attempt.status,
+            )
+
+    async def _result_for_event(
+        self, context: AttemptContext, event: ProviderEvent
+    ) -> PollResult:
+        if event.status == ProviderStatus.CANCELLED:
+            return PollResult(
+                status=ProviderStatus.CANCELLED,
+                provider_job_id=event.provider_job_id,
+            )
+        if event.status == ProviderStatus.FAILED and event.failure is not None:
+            return PollResult(
+                status=ProviderStatus.FAILED,
+                provider_job_id=event.provider_job_id,
+                failure=event.failure,
+            )
+        if event.status in {ProviderStatus.SUCCEEDED, ProviderStatus.FAILED}:
+            return await self._provider.poll(context.provider_attempt())
+        return PollResult(
+            status=event.status,
+            provider_job_id=event.provider_job_id,
+        )
+
+    def _apply_provider_result(
+        self, context: AttemptContext, result: PollResult
+    ) -> bool:
+        if result.provider_job_id and context.provider_job_id is None:
+            self._record_submit_accepted(context, result.provider_job_id, reconciled=True)
+            refreshed = self._load_attempt_by_provider_job(
+                context.provider_code, result.provider_job_id
+            )
+            if refreshed is None:
+                return False
+            context = refreshed
+        if result.status in {ProviderStatus.PENDING, ProviderStatus.RUNNING}:
+            return False
+        if result.status == ProviderStatus.UNKNOWN:
+            self._record_reconcile_pending(context)
+            return False
+        if result.status == ProviderStatus.SUCCEEDED:
+            if result.output is not None:
+                self._finish_output(context, result.output)
+                return False
+            result = PollResult(
+                status=ProviderStatus.FAILED,
+                provider_job_id=result.provider_job_id,
+                failure=ProviderFailure(
+                    FailureCode.OUTPUT_MISSING, "Provider 未返回输出"
+                ),
+            )
+        if result.status == ProviderStatus.CANCELLED:
+            self._finish_cancelled(context)
+            return False
+        failure = result.failure or ProviderFailure(
+            FailureCode.INTERNAL_ERROR, "Provider 返回未分类错误"
+        )
+        return self._fail_attempt(context, failure)
+
+    def _receive_provider_event(
+        self,
+        provider_code: str,
+        body: bytes,
+        event: ProviderEvent,
+    ) -> tuple[uuid.UUID, str | None]:
+        payload_hash = hashlib.sha256(body).hexdigest()
+        now = datetime.now(UTC)
+        lock_token = str(uuid.uuid4())
+        with self._session_factory() as db:
+            inbox = db.scalar(
+                select(ProviderEventInbox).where(
+                    ProviderEventInbox.provider_code == provider_code,
+                    ProviderEventInbox.external_event_id == event.event_id,
+                )
+            )
+            if inbox is None:
+                inbox = ProviderEventInbox(
+                    provider_code=provider_code,
+                    external_event_id=event.event_id,
+                    provider_job_id=event.provider_job_id,
+                    provider_status=event.status.value,
+                    payload_hash=payload_hash,
+                    failure_code=event.failure.code.value if event.failure else None,
+                    status=ProviderEventInboxStatus.RECEIVED,
+                )
+                db.add(inbox)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    inbox = db.scalar(
+                        select(ProviderEventInbox).where(
+                            ProviderEventInbox.provider_code == provider_code,
+                            ProviderEventInbox.external_event_id == event.event_id,
+                        )
+                    )
+                    if inbox is None:
+                        raise
+            if inbox.payload_hash != payload_hash:
+                logger.warning(
+                    "provider.webhook_event_conflict",
+                    provider=provider_code,
+                    event_id=event.event_id,
+                )
+                return inbox.id, None
+            changed = db.execute(
+                update(ProviderEventInbox)
+                .where(
+                    ProviderEventInbox.id == inbox.id,
+                    (
+                        (ProviderEventInbox.status == ProviderEventInboxStatus.RECEIVED)
+                        | (
+                            (ProviderEventInbox.status == ProviderEventInboxStatus.PROCESSING)
+                            & (ProviderEventInbox.locked_at < now - PROVIDER_EVENT_LEASE)
+                        )
+                    ),
+                )
+                .values(
+                    status=ProviderEventInboxStatus.PROCESSING,
+                    locked_at=now,
+                    lock_token=lock_token,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            return inbox.id, lock_token if changed.rowcount == 1 else None
+
+    def _reset_provider_event(self, event_id: uuid.UUID, lock_token: str) -> None:
+        with self._session_factory() as db:
+            db.execute(
+                update(ProviderEventInbox)
+                .where(
+                    ProviderEventInbox.id == event_id,
+                    ProviderEventInbox.status == ProviderEventInboxStatus.PROCESSING,
+                    ProviderEventInbox.lock_token == lock_token,
+                )
+                .values(
+                    status=ProviderEventInboxStatus.RECEIVED,
+                    locked_at=None,
+                    lock_token=None,
+                )
+            )
+            db.commit()
+
+    def _finish_provider_event(
+        self, event_id: uuid.UUID, lock_token: str, context: AttemptContext
+    ) -> None:
+        with self._session_factory() as db:
+            db.execute(
+                update(ProviderEventInbox)
+                .where(
+                    ProviderEventInbox.id == event_id,
+                    ProviderEventInbox.status == ProviderEventInboxStatus.PROCESSING,
+                    ProviderEventInbox.lock_token == lock_token,
+                )
+                .values(
+                    status=ProviderEventInboxStatus.PROCESSED,
+                    attempt_id=context.attempt_id,
+                    job_id=context.job_id,
+                    locked_at=None,
+                    lock_token=None,
+                    processed_at=datetime.now(UTC),
+                )
+            )
+            db.commit()
+
+    def _webhook_result(self, event_id: uuid.UUID) -> ProviderWebhookResult:
+        with self._session_factory() as db:
+            inbox = db.get(ProviderEventInbox, event_id)
+            if inbox is None:
+                raise RuntimeError("provider webhook inbox row disappeared")
+            return ProviderWebhookResult(
+                event_id=inbox.external_event_id,
+                status=inbox.status,
             )
 
     def _start_submit(self, context: AttemptContext) -> bool:
@@ -332,6 +604,30 @@ class GenerationExecutionService:
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return False
+            if job.status == JobStatus.CANCEL_REQUESTED:
+                if not transition_attempt(
+                    db,
+                    attempt,
+                    AttemptStatus.CANCELLED,
+                    "attempt.cancelled",
+                    f"attempt:{attempt.id}:terminal-cancelled:v1",
+                    {"failure_code": FailureCode.USER_CANCELLED.value},
+                ) or not transition_job(
+                    db,
+                    job,
+                    JobStatus.CANCELLED,
+                    "provider.cancelled",
+                    f"job:{job.id}:terminal-cancelled:v1",
+                ):
+                    db.rollback()
+                    return False
+                attempt.failure_code = FailureCode.USER_CANCELLED.value
+                attempt.finished_at = datetime.now(UTC)
+                job.failure_code = FailureCode.USER_CANCELLED.value
+                job.finished_at = datetime.now(UTC)
+                finish_reservation(db, job, settle=False)
+                db.commit()
+                return False
             target = (
                 AttemptStatus.FAILED_RETRYABLE if retryable else AttemptStatus.FAILED_FINAL
             )
@@ -414,7 +710,7 @@ class GenerationExecutionService:
             if (
                 job is None
                 or attempt is None
-                or job.status != JobStatus.RUNNING
+                or job.status not in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
                 or attempt.status != AttemptStatus.RUNNING
             ):
                 self._storage.delete(stored.key)
@@ -509,4 +805,40 @@ class GenerationExecutionService:
             job.finished_at = datetime.now(UTC)
             attempt.finished_at = datetime.now(UTC)
             finish_reservation(db, job, settle=True)
+            db.commit()
+
+    def _finish_cancelled(self, context: AttemptContext) -> None:
+        with self._session_factory() as db:
+            job = db.get(GenerationJob, context.job_id)
+            attempt = db.get(GenerationAttempt, context.attempt_id)
+            if job is None or attempt is None:
+                return
+            if job.status not in {
+                JobStatus.ROUTING,
+                JobStatus.SUBMITTED,
+                JobStatus.RUNNING,
+                JobStatus.CANCEL_REQUESTED,
+            }:
+                return
+            if not transition_attempt(
+                db,
+                attempt,
+                AttemptStatus.CANCELLED,
+                "attempt.cancelled",
+                f"attempt:{attempt.id}:terminal-cancelled:v1",
+                {"failure_code": FailureCode.USER_CANCELLED.value},
+            ) or not transition_job(
+                db,
+                job,
+                JobStatus.CANCELLED,
+                "provider.cancelled",
+                f"job:{job.id}:terminal-cancelled:v1",
+            ):
+                db.rollback()
+                return
+            attempt.failure_code = FailureCode.USER_CANCELLED.value
+            attempt.finished_at = datetime.now(UTC)
+            job.failure_code = FailureCode.USER_CANCELLED.value
+            job.finished_at = datetime.now(UTC)
+            finish_reservation(db, job, settle=False)
             db.commit()

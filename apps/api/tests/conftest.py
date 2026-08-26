@@ -17,6 +17,7 @@ else:
     os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
 os.environ["STORAGE_ROOT"] = "./test-storage"
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
+os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402

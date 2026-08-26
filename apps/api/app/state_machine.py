@@ -56,6 +56,7 @@ JOB_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.ROUTING: frozenset(
         {
             JobStatus.SUBMITTED,
+            JobStatus.CANCEL_REQUESTED,
             JobStatus.FAILED_FINAL,
             JobStatus.CANCELLED,
             JobStatus.EXPIRED,
@@ -65,12 +66,21 @@ JOB_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.SUBMITTED: frozenset(
         {
             JobStatus.RUNNING,
+            JobStatus.CANCEL_REQUESTED,
             JobStatus.FAILED_FINAL,
             JobStatus.CANCELLED,
             JobStatus.EXPIRED,
         }
     ),
     JobStatus.RUNNING: frozenset(
+        {
+            JobStatus.POSTPROCESSING,
+            JobStatus.FAILED_FINAL,
+            JobStatus.CANCEL_REQUESTED,
+            JobStatus.CANCELLED,
+        }
+    ),
+    JobStatus.CANCEL_REQUESTED: frozenset(
         {JobStatus.POSTPROCESSING, JobStatus.FAILED_FINAL, JobStatus.CANCELLED}
     ),
     JobStatus.POSTPROCESSING: frozenset(

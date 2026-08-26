@@ -92,6 +92,7 @@ services:
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
+      MOCK_PROVIDER_WEBHOOK_SECRET: ${MOCK_PROVIDER_WEBHOOK_SECRET:-development-only-mock-webhook-secret}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       postgres:
