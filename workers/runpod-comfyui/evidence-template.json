@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "issue": 14,
+  "status": "BLOCKED_PENDING_CREDENTIAL_AND_COST_AUTHORIZATION",
+  "started_at": null,
+  "finished_at": null,
+  "authorization": {
+    "cost_limit_usd": null,
+    "cost_rate_usd_per_second": null,
+    "paid_poc_confirmed": false
+  },
+  "supply_chain": {
+    "registry_image": null,
+    "image_digest": null,
+    "worker_commit": "a1981e99b1f5a7201f387653420ad1f275b97d0a",
+    "comfyui_commit": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe",
+    "comfy_cli": "1.18.0",
+    "workflow_sha256": "454f03238c881b751529524c1db47c16619cb0dce13cb7c694f55653acd35fad",
+    "model_sha256": {}
+  },
+  "runs": [
+    {
+      "attempt_id": null,
+      "aspect_ratio": "16:9",
+      "execution_timeout_ms": null,
+      "provider_job_id": null,
+      "status": "PENDING",
+      "gpu": null,
+      "queue_ms": null,
+      "cold_start_ms": null,
+      "runtime_ms": null,
+      "billable_ms": null,
+      "estimated_cost_usd": null,
+      "media_validation": null
+    },
+    {
+      "attempt_id": null,
+      "aspect_ratio": "9:16",
+      "execution_timeout_ms": null,
+      "provider_job_id": null,
+      "status": "PENDING",
+      "gpu": null,
+      "queue_ms": null,
+      "cold_start_ms": null,
+      "runtime_ms": null,
+      "billable_ms": null,
+      "estimated_cost_usd": null,
+      "media_validation": null
+    }
+  ],
+  "failures": [],
+  "cost": {
+    "estimated_usd": "0",
+    "source": "CONFIGURED_UPPER_BOUND_RATE"
+  },
+  "cleanup": {
+    "cancel_attempts": 0,
+    "cancel_failures": 0,
+    "active_jobs_remaining": 0
+  },
+  "rollback": {
+    "triggered": false,
+    "status": "NOT_REQUIRED",
+    "actions": []
+  },
+  "decision": null
+}

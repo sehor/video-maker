@@ -1,0 +1,13 @@
+{
+  "job_id": "3b59a290-7f80-4d80-a651-9786225e17d1",
+  "attempt_id": "9d52c1db-f071-4876-86f7-3ccf597ac4db",
+  "workflow_id": "fast_wan_i2v_720_v1",
+  "prompt": "A paper boat crosses a calm lake at sunrise.",
+  "duration_ms": 5000,
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
+  "input_claim": "ZXhhbXBsZS1pbnB1dC1jbGFpbQ.c2lnbmF0dXJl",
+  "output_claim": "ZXhhbXBsZS1vdXRwdXQtY2xhaW0.c2lnbmF0dXJl",
+  "callback_claim": "ZXhhbXBsZS1jYWxsYmFjay1jbGFpbQ.c2lnbmF0dXJl"
+}
+

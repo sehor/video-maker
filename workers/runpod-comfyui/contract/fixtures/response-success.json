@@ -1,0 +1,30 @@
+{
+  "attempt_id": "9d52c1db-f071-4876-86f7-3ccf597ac4db",
+  "status": "SUCCEEDED",
+  "output": {
+    "claim": "ZXhhbXBsZS1vdXRwdXQtY2xhaW0.c2lnbmF0dXJl",
+    "media_type": "video/mp4",
+    "size_bytes": 123456,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "metrics": {
+    "gpu": "fixture-gpu",
+    "queue_ms": 0,
+    "cold_start_ms": 0,
+    "runtime_ms": 0,
+    "billable_ms": 0,
+    "cost_minor": 0,
+    "currency": "USD",
+    "cost_source": "ESTIMATED"
+  },
+  "versions": {
+    "worker_comfyui": "5.8.7",
+    "worker_commit": "a1981e99b1f5a7201f387653420ad1f275b97d0a",
+    "comfyui_commit": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe",
+    "comfy_cli": "1.18.0",
+    "workflow_sha256": "454f03238c881b751529524c1db47c16619cb0dce13cb7c694f55653acd35fad",
+    "model_sha256": {
+      "fixture-model": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  }
+}

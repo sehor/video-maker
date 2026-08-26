@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-factory.invalid/contracts/worker-comfyui-response-v1.schema.json",
+  "title": "Fixed 720p worker-comfyui success response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["attempt_id", "status", "output", "metrics", "versions"],
+  "properties": {
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "status": { "const": "SUCCEEDED" },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "media_type", "size_bytes", "sha256"],
+      "properties": {
+        "claim": { "type": "string", "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$" },
+        "media_type": { "const": "video/mp4" },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gpu", "queue_ms", "cold_start_ms", "runtime_ms", "billable_ms", "cost_minor", "currency", "cost_source"],
+      "properties": {
+        "gpu": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "queue_ms": { "type": "integer", "minimum": 0 },
+        "cold_start_ms": { "type": "integer", "minimum": 0 },
+        "runtime_ms": { "type": "integer", "minimum": 0 },
+        "billable_ms": { "type": "integer", "minimum": 0 },
+        "cost_minor": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "cost_source": { "enum": ["ACTUAL", "ESTIMATED"] }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worker_comfyui", "worker_commit", "comfyui_commit", "comfy_cli", "workflow_sha256", "model_sha256"],
+      "properties": {
+        "worker_comfyui": { "const": "5.8.7" },
+        "worker_commit": { "const": "a1981e99b1f5a7201f387653420ad1f275b97d0a" },
+        "comfyui_commit": { "const": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe" },
+        "comfy_cli": { "const": "1.18.0" },
+        "workflow_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "model_sha256": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    }
+  }
+}

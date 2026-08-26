@@ -1,0 +1,36 @@
+{
+  "workflow_id": "fast_wan_i2v_720_v1",
+  "workflow_file": "workflow_api.json",
+  "workflow_sha256": "454f03238c881b751529524c1db47c16619cb0dce13cb7c694f55653acd35fad",
+  "duration_ms": 5000,
+  "fps": 16,
+  "dimensions": {
+    "16:9": { "width": 1280, "height": 720 },
+    "9:16": { "width": 720, "height": 1280 }
+  },
+  "bindings": {
+    "input_filename": { "node": "1", "field": "image" },
+    "prompt": { "node": "5", "field": "text" },
+    "width": { "node": "7", "field": "width" },
+    "height": { "node": "7", "field": "height" },
+    "seed": { "node": "8", "field": "seed", "source": "attempt_id_sha256" }
+  },
+  "fixed_model_files": [
+    "wan2.1_i2v_14B_fp8_e4m3fn.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "forbidden_request_fields": [
+    "workflow",
+    "workflow_json",
+    "nodes",
+    "node_inputs",
+    "model",
+    "model_path",
+    "code",
+    "python",
+    "url",
+    "download_url",
+    "upload_url"
+  ]
+}

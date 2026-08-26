@@ -1,0 +1,13 @@
+{
+  "job_id": "c15a861b-c567-4dcc-9bcc-4ca91de893ac",
+  "attempt_id": "a55e08aa-d956-4d97-aea0-d6b47f16caaf",
+  "workflow_id": "fast_wan_i2v_720_v1",
+  "prompt": "A red kite rises above a quiet beach.",
+  "duration_ms": 5000,
+  "aspect_ratio": "9:16",
+  "resolution": "720p",
+  "input_claim": "ZXhhbXBsZS1pbnB1dC1jbGFpbQ.c2lnbmF0dXJl",
+  "output_claim": "ZXhhbXBsZS1vdXRwdXQtY2xhaW0.c2lnbmF0dXJl",
+  "callback_claim": "ZXhhbXBsZS1jYWxsYmFjay1jbGFpbQ.c2lnbmF0dXJl"
+}
+

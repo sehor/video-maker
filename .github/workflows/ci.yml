@@ -26,6 +26,10 @@ jobs:
         run: docker compose run --rm api pytest -q
       - name: API lint
         run: docker compose run --rm api ruff check app tests
+      - name: Fixed worker-comfyui contract
+        run: |
+          python -m unittest discover -s tests -p "test_*poc.py"
+          python workers/runpod-comfyui/contract/validate.py --root .
       - name: FFmpeg build and license inventory
         run: docker compose run --rm api python scripts/export_ffmpeg_build.py
       - name: Web unit tests

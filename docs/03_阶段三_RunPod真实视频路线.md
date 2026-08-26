@@ -123,3 +123,19 @@ Control Plane 必须：
 - [ ] Benchmark 和成本记录完整；
 - [ ] ComfyUI 不暴露公网；
 - [ ] 系统仍没有可售 1080p、2K 或 4K 路线。
+
+## 11. worker-comfyui POC 基线
+
+Issue #14 固定使用 worker-comfyui `5.8.7`（commit
+`a1981e99b1f5a7201f387653420ad1f275b97d0a`）、ComfyUI `v0.29.0`（commit
+`a8c44f9b2a0678ac4082e3529a3f43db7472acfe`）和隔离的 comfy-cli `v1.18.0`。
+系统只接受仓库内的 `fast_wan_i2v_720_v1` workflow 与 claim-only Worker Contract；
+不接受 workflow JSON、节点、模型、代码或任意 URL。
+
+在独立 RunPod 凭据和成本授权前，该 Worker 保持 `CONDITIONAL`，不得启用路线。
+镜像 digest、模型 SHA-256、5 秒横竖屏真实输出、FFmpeg 校验、冷启动、运行时间、成本、
+失败记录和继续／拒绝结论必须在获批的真实 POC 后补齐。
+
+Issue #14 收尾时仍没有 RunPod 凭据和费用授权，用户明确选择跳过真实付费 POC 并继续
+后续工作。该选择不是 POC 通过：GPU、冷启动、运行时间、真实输出和成本均未验证，
+worker-comfyui 继续保持 `CONDITIONAL`，路线不得启用。
