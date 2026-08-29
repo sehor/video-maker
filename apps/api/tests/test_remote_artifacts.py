@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import subprocess
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from app.provider import (
 )
 from app.provider_execution import GenerationExecutionService
 from app.routing import MOCK_ROUTE_VERSION, get_route_registry
+from app.simulators import SimulatedRunPodMetrics, SimulatedRunPodProvenance
 from app.storage import LocalObjectStorage, ObjectStorage
 from tests.test_projects_permissions import create_project
 
@@ -56,6 +58,8 @@ class ArtifactProvider:
         self._sha256 = sha256
         self._requests: dict[uuid.UUID, SubmitRequest] = {}
         self._outputs: dict[uuid.UUID, ProviderOutput] = {}
+        self._provenance = SimulatedRunPodProvenance()
+        self._metrics = SimulatedRunPodMetrics()
         self.poll_calls = 0
 
     async def submit(self, request: SubmitRequest) -> SubmitResult:
@@ -91,6 +95,11 @@ class ArtifactProvider:
             ProviderStatus.SUCCEEDED,
             provider_job_id=attempt.provider_job_id,
             output=output,
+            metrics=self._metrics.provider_metrics(self._provenance.gpu_type),
+            versions=replace(
+                self._provenance.versions(),
+                workflow_version=self._requests[attempt.attempt_id].workflow_id,
+            ),
         )
 
     async def cancel(self, attempt: ProviderAttempt) -> CancelResult:
@@ -100,7 +109,11 @@ class ArtifactProvider:
         raise WebhookVerificationError("not used")
 
     async def read_cost(self, attempt: ProviderAttempt) -> CostResult | None:
-        return None
+        return CostResult(
+            amount_minor=self._metrics.cost_minor,
+            currency=self._metrics.currency,
+            source=self._metrics.cost_source,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -234,8 +247,16 @@ def test_valid_remote_artifact_publishes_and_settles_once(
     with SessionLocal() as db:
         job = db.get(GenerationJob, job_id)
         assert job is not None
-        assert job.status == JobStatus.SUCCEEDED
+        assert job.status == JobStatus.SUCCEEDED, (
+            job.failure_code,
+            job.error_message,
+        )
         assert job.settlement_status == SettlementStatus.SETTLED
+        attempt = job.attempts[0]
+        assert attempt.cost_source == "SIMULATED"
+        assert attempt.gpu_type == "NVIDIA L40S (SIMULATED)"
+        assert attempt.image_digest == SimulatedRunPodProvenance().image_digest
+        assert attempt.workflow_hash == SimulatedRunPodProvenance().workflow_sha256
         output = db.scalar(
             select(GenerationOutput).where(GenerationOutput.job_id == job_id)
         )

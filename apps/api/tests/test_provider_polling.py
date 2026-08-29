@@ -211,6 +211,34 @@ def test_submit_outcome_unknown_is_reconciled_after_restart_without_resubmit(
             assert attempt is not None
             assert attempt.status.value == "RUNNING"
             assert attempt.provider_job_id == provider.jobs()[0].provider_job_id
+
+        clock.advance(timedelta(seconds=5))
+        completed = asyncio.run(_executor(provider, clock).execute(job_id))
+        replayed = asyncio.run(_executor(provider, clock).execute(job_id))
+        assert completed.is_complete
+        assert replayed.is_complete
+        assert provider.submit_calls == 1
+        assert len(provider.jobs()) == 1
+        with SessionLocal() as db:
+            assert (
+                db.scalar(
+                    select(func.count())
+                    .select_from(GenerationOutput)
+                    .where(GenerationOutput.job_id == job_id)
+                )
+                == 1
+            )
+            assert (
+                db.scalar(
+                    select(func.count())
+                    .select_from(LedgerTransaction)
+                    .where(
+                        LedgerTransaction.reference_id == str(job_id),
+                        LedgerTransaction.tx_type == "SETTLE",
+                    )
+                )
+                == 1
+            )
     finally:
         routes.activate(previous)
 

@@ -139,3 +139,28 @@ Issue #14 固定使用 worker-comfyui `5.8.7`（commit
 Issue #14 收尾时仍没有 RunPod 凭据和费用授权，用户明确选择跳过真实付费 POC 并继续
 后续工作。该选择不是 POC 通过：GPU、冷启动、运行时间、真实输出和成本均未验证，
 worker-comfyui 继续保持 `CONDITIONAL`，路线不得启用。
+
+## 12. Issue 8 最终模拟验收状态
+
+Issue 8 只完成离线、确定性的 Control Plane 模拟验收，不代表真实 RunPod POC 通过。
+最终模拟矩阵覆盖：
+
+| 场景 | 模拟验收结果 | 幂等与恢复断言 |
+|---|---|---|
+| 排队 → 运行 → 成功 | 通过 | 进程重启后继续；只提交、发布和结算一次 |
+| Provider 最终失败 | 通过 | 不发布；只返还一次 |
+| Provider 超时／轮询预算耗尽 | 通过 | 重试有界；不重复提交同一 Attempt；只返还一次 |
+| 取消 | 通过 | best-effort 取消确认后终止；不发布；只返还一次 |
+| submit outcome unknown | 通过 | 重启后以 polling 对账，不重新 submit；最终只发布、结算一次 |
+| polling／Hatchet 进程重启恢复 | 通过 | 每个 polling step 均可从 PostgreSQL 状态恢复 |
+| 重复执行、重复 webhook、poll/webhook 竞争 | 通过 | 单一完成路径；只发布、结算或返还一次 |
+| 迟到成功／迟到取消 | 通过 | 已有终态不被旧事件改写；有效迟到成功只完成一次 |
+
+模拟验收使用 `DeterministicRunPodSimulator`、受控时钟、故障注入和私有对象存储契约；
+真实 RunPod、真实 R2、真实 Hatchet／容器服务在本验收中均未启用。
+
+截至 Issue 8 收尾，真实 RunPod POC **仍未通过**：没有验证真实 GPU、镜像启动、
+真实 5 秒 720p 横竖屏输出、冷启动、运行时间、真实 R2 传输或供应商成本。
+`worker-comfyui` 和真实 RunPod 路线继续保持 `CONDITIONAL`／默认禁用；只有完成独立、
+获批且有凭据的真实 POC 后，才可更新本节结论或启用路线。模拟通过不得用于对外宣称
+真实 POC、Benchmark 或生产就绪。
