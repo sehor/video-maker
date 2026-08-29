@@ -21,8 +21,10 @@ from app.provider import (
     ProviderAttempt,
     ProviderEvent,
     ProviderFailure,
+    ProviderMetrics,
     ProviderOutput,
     ProviderStatus,
+    ProviderVersions,
     SubmitDisposition,
     SubmitRequest,
     SubmitResult,
@@ -260,6 +262,18 @@ class SimulatedRunPodProvenance:
         default_factory=lambda: SIMULATED_MODEL_HASHES
     )
 
+    def versions(self) -> ProviderVersions:
+        return ProviderVersions(
+            image_digest=self.image_digest,
+            worker_version=self.worker_version,
+            worker_commit=self.worker_commit,
+            comfyui_version=self.comfyui_version,
+            comfyui_commit=self.comfyui_commit,
+            workflow_version=self.workflow_id,
+            workflow_hash=self.workflow_sha256,
+            model_hashes=self.model_sha256,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SimulatedRunPodMetrics:
@@ -269,7 +283,16 @@ class SimulatedRunPodMetrics:
     billable_ms: int = 3_500
     cost_minor: int = 7
     currency: str = "USD"
-    cost_source: CostSource = CostSource.ESTIMATED
+    cost_source: CostSource = CostSource.SIMULATED
+
+    def provider_metrics(self, gpu_type: str) -> ProviderMetrics:
+        return ProviderMetrics(
+            gpu_type=gpu_type,
+            queue_ms=self.queue_ms,
+            cold_start_ms=self.cold_start_ms,
+            runtime_ms=self.runtime_ms,
+            billable_ms=self.billable_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,11 +395,19 @@ class DeterministicRunPodSimulator:
                 status=job.status,
                 provider_job_id=job.provider_job_id,
                 output=self._output(job.request),
+                metrics=self._metrics.provider_metrics(self._provenance.gpu_type),
+                versions=self._provenance.versions(),
             )
         return PollResult(
             status=job.status,
             provider_job_id=job.provider_job_id,
             failure=job.failure,
+            metrics=(
+                self._metrics.provider_metrics(self._provenance.gpu_type)
+                if job.status in self._TERMINAL
+                else None
+            ),
+            versions=(self._provenance.versions() if job.status in self._TERMINAL else None),
         )
 
     async def cancel(self, attempt: ProviderAttempt) -> CancelResult:

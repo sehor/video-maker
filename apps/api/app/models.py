@@ -657,6 +657,19 @@ class GenerationAttempt(Base, TimestampMixin):
             name="uq_generation_attempt_provider_job",
         ),
         CheckConstraint("attempt_no >= 1", name="ck_generation_attempts_attempt_no"),
+        CheckConstraint(
+            "(queue_ms IS NULL OR queue_ms >= 0) AND "
+            "(cold_start_ms IS NULL OR cold_start_ms >= 0) AND "
+            "(runtime_ms IS NULL OR runtime_ms >= 0) AND "
+            "(billable_ms IS NULL OR billable_ms >= 0)",
+            name="ck_generation_attempts_timings_nonnegative",
+        ),
+        CheckConstraint(
+            "(cost_minor IS NULL AND cost_currency IS NULL AND cost_source IS NULL) OR "
+            "(cost_minor >= 0 AND cost_currency IS NOT NULL AND "
+            "cost_source IN ('ACTUAL', 'ESTIMATE', 'SIMULATED'))",
+            name="ck_generation_attempts_cost_snapshot",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -669,6 +682,17 @@ class GenerationAttempt(Base, TimestampMixin):
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
     workflow_version: Mapped[str] = mapped_column(String(100), default="mock:v1", nullable=False)
     worker_version: Mapped[str | None] = mapped_column(String(100))
+    image_digest: Mapped[str | None] = mapped_column(String(80))
+    worker_commit: Mapped[str | None] = mapped_column(String(64))
+    comfyui_version: Mapped[str | None] = mapped_column(String(100))
+    comfyui_commit: Mapped[str | None] = mapped_column(String(64))
+    workflow_hash: Mapped[str | None] = mapped_column(String(64))
+    model_hashes_json: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    gpu_type: Mapped[str | None] = mapped_column(String(100))
+    queue_ms: Mapped[int | None] = mapped_column(BigInteger)
+    cold_start_ms: Mapped[int | None] = mapped_column(BigInteger)
+    runtime_ms: Mapped[int | None] = mapped_column(BigInteger)
+    billable_ms: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[AttemptStatus] = mapped_column(
         Enum(AttemptStatus, native_enum=False, length=24),
         default=AttemptStatus.CREATED,
@@ -679,6 +703,7 @@ class GenerationAttempt(Base, TimestampMixin):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cost_minor: Mapped[int | None] = mapped_column(BigInteger)
     cost_currency: Mapped[str | None] = mapped_column(String(3))
+    cost_source: Mapped[str | None] = mapped_column(String(16))
     raw_metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     job: Mapped[GenerationJob] = relationship(back_populates="attempts")

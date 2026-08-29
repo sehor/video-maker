@@ -104,7 +104,7 @@ def test_stateful_runpod_success_has_stable_queue_run_and_provenance() -> None:
         "wan_2.1_vae.safetensors",
     ]
     assert snapshot.metrics.cost_minor == 7
-    assert snapshot.metrics.cost_source == CostSource.ESTIMATED
+    assert snapshot.metrics.cost_source == CostSource.SIMULATED
     assert poll(simulator, attempt) == completed
 
 
@@ -181,7 +181,7 @@ def test_cost_is_fixed_and_unknown_attempt_has_no_cost() -> None:
     unknown = asyncio.run(simulator.read_cost(provider_attempt("runpod-sim-unknown")))
 
     assert cost is not None
-    assert (cost.amount_minor, cost.currency, cost.source) == (7, "USD", CostSource.ESTIMATED)
+    assert (cost.amount_minor, cost.currency, cost.source) == (7, "USD", CostSource.SIMULATED)
     assert unknown is None
 
 

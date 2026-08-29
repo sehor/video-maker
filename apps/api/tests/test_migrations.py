@@ -55,7 +55,12 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "ledger_postings_immutable_delete",
         "generation_quote_terms_immutable",
         "generation_quote_status_monotonic",
+        "generation_attempt_snapshot_immutable",
     } <= triggers
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            "0008_attempt_provenance"
+        )
 
     command.downgrade(config, "0001_stage_one")
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
@@ -116,6 +121,24 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     assert {"quote_id", "ledger_unit", "reserved_amount_ms", "settlement_status"} <= {
         column["name"] for column in inspector.get_columns("generation_jobs")
     }
+    assert {
+        "image_digest",
+        "worker_version",
+        "worker_commit",
+        "comfyui_version",
+        "comfyui_commit",
+        "workflow_version",
+        "workflow_hash",
+        "model_hashes_json",
+        "gpu_type",
+        "queue_ms",
+        "cold_start_ms",
+        "runtime_ms",
+        "billable_ms",
+        "cost_minor",
+        "cost_currency",
+        "cost_source",
+    } <= {column["name"] for column in inspector.get_columns("generation_attempts")}
     assert {
         "user_id",
         "project_id",

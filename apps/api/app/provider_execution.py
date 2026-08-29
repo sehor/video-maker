@@ -1,7 +1,7 @@
 import hashlib
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
@@ -299,6 +299,7 @@ class GenerationExecutionService:
                     poll_count=reservation.poll_count,
                     retry_after=self._polling.delay_after(reservation.poll_count),
                 )
+            result = await self._with_terminal_cost(provider, context, result)
             action = self._apply_provider_result(context, result)
             if action == ProviderResultAction.RETRY:
                 continue
@@ -339,12 +340,17 @@ class GenerationExecutionService:
             provider_status=result.status.value,
         )
         if result.status == ProviderStatus.CANCELLED:
-            self._apply_provider_result(
+            terminal = await self._with_terminal_cost(
+                provider,
                 context,
                 PollResult(
                     status=ProviderStatus.CANCELLED,
                     provider_job_id=context.provider_job_id,
                 ),
+            )
+            self._apply_provider_result(
+                context,
+                terminal,
             )
 
     async def handle_webhook(
@@ -365,6 +371,7 @@ class GenerationExecutionService:
 
         try:
             result = await self._result_for_event(provider, context, event)
+            result = await self._with_terminal_cost(provider, context, result)
         except Exception as exc:
             self._reset_provider_event(event_id, lock_token)
             logger.warning(
@@ -611,9 +618,17 @@ class GenerationExecutionService:
     ) -> ProviderResultAction:
         """Single idempotent completion path for polling, webhooks, and cancellation."""
 
+        source_failure = self._cost_source_failure(context, result)
+        if source_failure is not None:
+            self._fail_attempt(context, source_failure)
+            return ProviderResultAction.COMPLETE
         if result.status == ProviderStatus.SUCCEEDED:
             if result.output is not None:
-                self._finish_output(context, result.output)
+                snapshot_failure = self._snapshot_failure(context, result)
+                if snapshot_failure is None:
+                    self._finish_output(context, result.output, result)
+                    return ProviderResultAction.COMPLETE
+                self._fail_attempt(context, snapshot_failure)
                 return ProviderResultAction.COMPLETE
             result = PollResult(
                 status=ProviderStatus.FAILED,
@@ -621,16 +636,118 @@ class GenerationExecutionService:
                 failure=ProviderFailure(FailureCode.OUTPUT_MISSING, "Provider 未返回输出"),
             )
         if result.status == ProviderStatus.CANCELLED:
-            self._finish_cancelled(context)
+            self._finish_cancelled(context, result)
             return ProviderResultAction.COMPLETE
         failure = result.failure or ProviderFailure(
             FailureCode.INTERNAL_ERROR, "Provider 返回未分类错误"
         )
         return (
             ProviderResultAction.RETRY
-            if self._fail_attempt(context, failure)
+            if self._fail_attempt(context, failure, result=result)
             else ProviderResultAction.COMPLETE
         )
+
+    async def _with_terminal_cost(
+        self,
+        provider: VideoProvider,
+        context: AttemptContext,
+        result: PollResult,
+    ) -> PollResult:
+        if result.status not in {
+            ProviderStatus.SUCCEEDED,
+            ProviderStatus.FAILED,
+            ProviderStatus.CANCELLED,
+        } or result.cost is not None:
+            return result
+        try:
+            cost = await provider.read_cost(context.provider_attempt())
+        except Exception as exc:
+            logger.warning(
+                "provider.cost_snapshot_failed",
+                job_id=str(context.job_id),
+                attempt_id=str(context.attempt_id),
+                provider=context.provider_code,
+                error_type=type(exc).__name__,
+            )
+            return result
+        return replace(result, cost=cost)
+
+    @staticmethod
+    def _snapshot_failure(
+        context: AttemptContext, result: PollResult
+    ) -> ProviderFailure | None:
+        if result.metrics is None or result.versions is None or result.cost is None:
+            return ProviderFailure(
+                FailureCode.INTERNAL_ERROR,
+                "Provider 成功结果缺少完整版本、计时或成本快照",
+            )
+        if result.versions.workflow_version != context.workflow_version:
+            return ProviderFailure(
+                FailureCode.INTERNAL_ERROR,
+                "Provider workflow 版本与 Attempt 不一致",
+            )
+        return None
+
+    @staticmethod
+    def _cost_source_failure(
+        context: AttemptContext, result: PollResult
+    ) -> ProviderFailure | None:
+        if result.cost is None:
+            return None
+        simulated_provider = context.provider_code in {"mock", "runpod-simulator"}
+        if simulated_provider == (result.cost.source.value == "SIMULATED"):
+            return None
+        return ProviderFailure(
+            FailureCode.INTERNAL_ERROR,
+            "Provider 成本来源与执行环境不一致",
+        )
+
+    @staticmethod
+    def _apply_attempt_snapshot(
+        attempt: GenerationAttempt,
+        result: PollResult,
+    ) -> None:
+        values: dict[str, object] = {}
+        if result.versions is not None:
+            versions = result.versions
+            if attempt.workflow_version != versions.workflow_version:
+                raise ValueError("provider workflow version does not match attempt")
+            values.update(
+                worker_version=versions.worker_version,
+                image_digest=versions.image_digest,
+                worker_commit=versions.worker_commit,
+                comfyui_version=versions.comfyui_version,
+                comfyui_commit=versions.comfyui_commit,
+                workflow_hash=versions.workflow_hash,
+                model_hashes_json=dict(versions.model_hashes),
+            )
+        if result.metrics is not None:
+            metrics = result.metrics
+            values.update(
+                gpu_type=metrics.gpu_type,
+                queue_ms=metrics.queue_ms,
+                cold_start_ms=metrics.cold_start_ms,
+                runtime_ms=metrics.runtime_ms,
+                billable_ms=metrics.billable_ms,
+                raw_metrics_json={
+                    "gpu_type": metrics.gpu_type,
+                    "queue_ms": metrics.queue_ms,
+                    "cold_start_ms": metrics.cold_start_ms,
+                    "runtime_ms": metrics.runtime_ms,
+                    "billable_ms": metrics.billable_ms,
+                },
+            )
+        if result.cost is not None:
+            values.update(
+                cost_minor=result.cost.amount_minor,
+                cost_currency=result.cost.currency,
+                cost_source=result.cost.source.value,
+            )
+        for field_name, value in values.items():
+            existing = getattr(attempt, field_name)
+            if existing is not None and existing != value:
+                raise ValueError(f"attempt snapshot field {field_name} is immutable")
+            setattr(attempt, field_name, value)
 
     def _receive_provider_event(
         self,
@@ -872,6 +989,7 @@ class GenerationExecutionService:
         failure: ProviderFailure,
         *,
         target: AttemptStatus | None = None,
+        result: PollResult | None = None,
     ) -> bool:
         retryable = is_retryable_failure(failure.code)
         with self._session_factory() as db:
@@ -879,6 +997,8 @@ class GenerationExecutionService:
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return False
+            if result is not None:
+                self._apply_attempt_snapshot(attempt, result)
             if job.status == JobStatus.CANCEL_REQUESTED:
                 if not transition_attempt(
                     db,
@@ -978,14 +1098,22 @@ class GenerationExecutionService:
         )
         return AttemptBudget(total_attempts=total or 0, candidate_attempts=candidate or 0)
 
-    def _finish_output(self, context: AttemptContext, output: ProviderOutput) -> None:
+    def _finish_output(
+        self,
+        context: AttemptContext,
+        output: ProviderOutput,
+        result: PollResult,
+    ) -> None:
         if output.object_key is not None:
-            self._finish_remote_output(context, output)
+            self._finish_remote_output(context, output, result)
             return
-        self._finish_embedded_output(context, output)
+        self._finish_embedded_output(context, output, result)
 
     def _finish_remote_output(
-        self, context: AttemptContext, output: ProviderOutput
+        self,
+        context: AttemptContext,
+        output: ProviderOutput,
+        result: PollResult,
     ) -> None:
         try:
             published = self._artifact_receiver.receive_and_publish(
@@ -998,7 +1126,7 @@ class GenerationExecutionService:
                 ),
             )
         except ArtifactReceiptError as exc:
-            self._fail_attempt(context, exc.failure)
+            self._fail_attempt(context, exc.failure, result=result)
             return
 
         stored = published.stored
@@ -1015,6 +1143,7 @@ class GenerationExecutionService:
                 ):
                     self._storage.delete(stored.key)
                     return
+                self._apply_attempt_snapshot(attempt, result)
                 if not transition_job(
                     db,
                     job,
@@ -1075,7 +1204,10 @@ class GenerationExecutionService:
             raise
 
     def _finish_embedded_output(
-        self, context: AttemptContext, output: ProviderOutput
+        self,
+        context: AttemptContext,
+        output: ProviderOutput,
+        result: PollResult,
     ) -> None:
         if output.content is None:
             self._fail_attempt(
@@ -1100,6 +1232,7 @@ class GenerationExecutionService:
             ):
                 self._storage.delete(stored.key)
                 return
+            self._apply_attempt_snapshot(attempt, result)
             if not transition_job(
                 db,
                 job,
@@ -1192,12 +1325,13 @@ class GenerationExecutionService:
             finish_reservation(db, job, settle=True)
             db.commit()
 
-    def _finish_cancelled(self, context: AttemptContext) -> None:
+    def _finish_cancelled(self, context: AttemptContext, result: PollResult) -> None:
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return
+            self._apply_attempt_snapshot(attempt, result)
             if job.status not in {
                 JobStatus.ROUTING,
                 JobStatus.SUBMITTED,
