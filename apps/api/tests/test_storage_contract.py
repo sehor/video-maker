@@ -9,6 +9,7 @@ from typing import BinaryIO
 import pytest
 
 from app.errors import ApiError
+from app.simulators import FakeRemoteStorage
 from app.storage import (
     ClaimOperation,
     LocalObjectStorage,
@@ -56,10 +57,12 @@ class FakeRemoteBackend:
 StorageFactory = Callable[[MutableClock], ObjectStorage]
 
 
-@pytest.fixture(params=["local", "remote"])
+@pytest.fixture(params=["local", "remote", "fake-remote"])
 def storage_factory(request: pytest.FixtureRequest, tmp_path: Path) -> StorageFactory:
     if request.param == "local":
         return lambda clock: LocalObjectStorage(tmp_path / "objects", CLAIM_SECRET, clock=clock)
+    if request.param == "fake-remote":
+        return lambda clock: FakeRemoteStorage(CLAIM_SECRET, clock=clock)
     return lambda clock: RemoteObjectStorage(FakeRemoteBackend(), CLAIM_SECRET, clock=clock)
 
 
