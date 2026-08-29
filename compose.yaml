@@ -94,6 +94,9 @@ services:
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
       MOCK_PROVIDER_WEBHOOK_SECRET: ${MOCK_PROVIDER_WEBHOOK_SECRET:-development-only-mock-webhook-secret}
+      TEST_RUNTIME_ROOT: ${TEST_RUNTIME_ROOT:-/tmp/video-factory-tests}
+      PYTEST_ADDOPTS: ${PYTEST_ADDOPTS:--o cache_dir=/tmp/video-factory-pytest-cache}
+      RUFF_CACHE_DIR: ${RUFF_CACHE_DIR:-/tmp/video-factory-ruff-cache}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       postgres:

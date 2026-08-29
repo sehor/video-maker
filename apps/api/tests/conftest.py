@@ -7,6 +7,12 @@ import pytest
 from fastapi import Header
 from fastapi.testclient import TestClient
 
+api_root = Path(__file__).resolve().parents[1]
+test_runtime_root = Path(
+    os.environ.get("TEST_RUNTIME_ROOT", api_root / ".test-tmp")
+).resolve()
+test_runtime_root.mkdir(parents=True, exist_ok=True)
+
 test_database_url = os.environ.get("TEST_DATABASE_URL")
 if test_database_url:
     database_name = test_database_url.rsplit("/", 1)[-1].split("?", 1)[0]
@@ -14,8 +20,10 @@ if test_database_url:
         raise RuntimeError("TEST_DATABASE_URL must target a database ending in _test")
     os.environ["DATABASE_URL"] = test_database_url
 else:
-    os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
-os.environ["STORAGE_ROOT"] = "./test-storage"
+    os.environ["DATABASE_URL"] = (
+        f"sqlite+pysqlite:///{test_runtime_root / 'test.db'}"
+    )
+os.environ["STORAGE_ROOT"] = str(test_runtime_root / "storage")
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
 os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"

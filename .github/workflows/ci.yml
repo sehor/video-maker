@@ -23,9 +23,44 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter @video-factory/web exec playwright install --with-deps chromium
       - name: API tests
-        run: docker compose run --rm api pytest -q
+        run: |
+          docker compose run --rm --no-deps \
+            -v "${{ github.workspace }}:/repo:ro" \
+            -w /repo/apps/api \
+            api pytest -q tests
       - name: API lint
-        run: docker compose run --rm api ruff check app tests
+        run: |
+          docker compose run --rm --no-deps \
+            -v "${{ github.workspace }}:/repo:ro" \
+            -w /repo/apps/api \
+            api ruff check app tests
+      - name: PostgreSQL migration baseline
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory_ci_test
+        run: |
+          docker compose up -d --wait postgres
+          docker compose exec -T postgres \
+            psql -U video_factory -d postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE video_factory_ci_test"
+          docker compose run --rm --no-deps -w /app \
+            -e DATABASE_URL="$TEST_DATABASE_URL" \
+            api alembic upgrade head
+          test "$(docker compose exec -T postgres \
+            psql -U video_factory -d video_factory_ci_test -Atc \
+            'SELECT version_num FROM alembic_version')" = \
+            "0007_batch_atomic_reservation"
+      - name: PostgreSQL concurrency regressions
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory_ci_test
+        run: |
+          for run in 1 2 3; do
+            echo "PostgreSQL concurrency run ${run}/3"
+            docker compose run --rm --no-deps -w /app \
+              -e TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+              api pytest -q \
+              tests/test_quote_ledger.py::test_competing_submissions_cannot_overdraw \
+              tests/test_batch_atomic.py::test_competing_batches_cannot_overdraw_wallet
+          done
       - name: Fixed worker-comfyui contract
         run: |
           docker compose run --rm --no-deps \
@@ -43,8 +78,8 @@ jobs:
           docker compose run --rm web pnpm run build
       - name: OpenAPI client is current
         run: |
-          docker compose run --rm api python scripts/export_openapi.py
-          docker compose run --rm web pnpm run generate:client
+          docker compose run --rm --no-deps -w /app api python scripts/export_openapi.py
+          pnpm --filter @video-factory/api-client check
           git diff --exit-code -- packages/api-client
       - name: End-to-end business loop
         run: |
