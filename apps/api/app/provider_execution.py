@@ -1,7 +1,9 @@
 import hashlib
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 import structlog
 from sqlalchemy import func, select, update
@@ -55,6 +57,50 @@ MAX_ATTEMPTS_PER_CANDIDATE = 2
 MAX_ATTEMPTS_PER_JOB = 3
 PROVIDER_EVENT_LEASE = timedelta(minutes=5)
 logger = structlog.get_logger()
+
+
+class ProviderResultAction(StrEnum):
+    WAIT = "WAIT"
+    RETRY = "RETRY"
+    COMPLETE = "COMPLETE"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderPollingPolicy:
+    initial_delay: timedelta = timedelta(seconds=1)
+    maximum_delay: timedelta = timedelta(seconds=30)
+    deadline: timedelta = timedelta(minutes=30)
+    maximum_polls: int = 120
+
+    def __post_init__(self) -> None:
+        if self.initial_delay <= timedelta(0):
+            raise ValueError("initial polling delay must be positive")
+        if self.maximum_delay < self.initial_delay:
+            raise ValueError("maximum polling delay must not be shorter than initial delay")
+        if self.deadline <= timedelta(0):
+            raise ValueError("polling deadline must be positive")
+        if self.maximum_polls <= 0:
+            raise ValueError("maximum polls must be positive")
+
+    def delay_after(self, poll_count: int) -> timedelta:
+        if poll_count <= 0:
+            raise ValueError("poll count must be positive")
+        multiplier = 1 << min(poll_count - 1, 30)
+        return min(self.initial_delay * multiplier, self.maximum_delay)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderExecutionStep:
+    is_complete: bool
+    poll_count: int
+    retry_after: timedelta | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PollReservation:
+    poll_count: int
+    acquired: bool
+    exhausted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,16 +163,18 @@ class GenerationExecutionService:
         route_registry: RouteRegistry | None = None,
         callback_claim_issuer: CallbackClaimIssuer | None = None,
         session_factory: sessionmaker[Session] = SessionLocal,
+        polling_policy: ProviderPollingPolicy | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._storage = storage
         self._provider_override = provider
         self._providers = provider_registry or get_provider_registry()
         self._routes = route_registry or get_route_registry()
         self._callback_claims = callback_claim_issuer or get_callback_claim_issuer()
-        self._claim_ttl = timedelta(
-            seconds=get_settings().provider_claim_ttl_seconds
-        )
+        self._claim_ttl = timedelta(seconds=get_settings().provider_claim_ttl_seconds)
         self._session_factory = session_factory
+        self._polling = polling_policy or ProviderPollingPolicy()
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def _provider_for(self, provider_code: str) -> VideoProvider:
         if self._provider_override is not None:
@@ -180,15 +228,15 @@ class GenerationExecutionService:
             mode=context.mode,
         )
 
-    async def execute(self, job_id: uuid.UUID) -> None:
+    async def execute(self, job_id: uuid.UUID) -> ProviderExecutionStep:
         while context := self._load_active_attempt(job_id):
             provider = self._provider_for(context.provider_code)
             if context.status == AttemptStatus.CREATED:
                 if not self._start_submit(context):
-                    return
+                    return ProviderExecutionStep(is_complete=False, poll_count=0)
                 context = self._load_active_attempt(job_id)
                 if context is None:
-                    return
+                    return ProviderExecutionStep(is_complete=True, poll_count=0)
                 try:
                     submitted = await provider.submit(self._submit_request(context))
                 except Exception:
@@ -203,21 +251,60 @@ class GenerationExecutionService:
 
             context = self._load_active_attempt(job_id)
             if context is None:
-                return
+                return ProviderExecutionStep(is_complete=True, poll_count=0)
             if context.status not in {
                 AttemptStatus.SUBMITTING,
                 AttemptStatus.SUBMITTED,
                 AttemptStatus.RUNNING,
             }:
-                return
+                return ProviderExecutionStep(is_complete=True, poll_count=0)
+
+            reservation = self._reserve_poll(context)
+            if reservation.exhausted:
+                action = self._fail_attempt(
+                    context,
+                    ProviderFailure(
+                        FailureCode.QUEUE_TIMEOUT,
+                        "Provider polling budget exhausted",
+                    ),
+                    target=AttemptStatus.TIMED_OUT,
+                )
+                if action:
+                    continue
+                return ProviderExecutionStep(
+                    is_complete=True,
+                    poll_count=reservation.poll_count,
+                )
+            if not reservation.acquired:
+                return ProviderExecutionStep(
+                    is_complete=False,
+                    poll_count=max(1, reservation.poll_count),
+                    retry_after=self._polling.delay_after(max(1, reservation.poll_count)),
+                )
 
             try:
                 result = await provider.poll(context.provider_attempt())
             except Exception:
                 self._record_reconcile_pending(context)
-                return
-            if not self._apply_provider_result(context, result):
-                return
+                return ProviderExecutionStep(
+                    is_complete=False,
+                    poll_count=reservation.poll_count,
+                    retry_after=self._polling.delay_after(reservation.poll_count),
+                )
+            action = self._apply_provider_result(context, result)
+            if action == ProviderResultAction.RETRY:
+                continue
+            if action == ProviderResultAction.WAIT:
+                return ProviderExecutionStep(
+                    is_complete=False,
+                    poll_count=reservation.poll_count,
+                    retry_after=self._polling.delay_after(reservation.poll_count),
+                )
+            return ProviderExecutionStep(
+                is_complete=True,
+                poll_count=reservation.poll_count,
+            )
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     async def request_cancel(self, job_id: uuid.UUID) -> None:
         context = self._load_active_attempt(job_id)
@@ -259,15 +346,11 @@ class GenerationExecutionService:
     ) -> ProviderWebhookResult:
         provider = self._provider_for(provider_code)
         event = await provider.verify_webhook(request)
-        event_id, lock_token = self._receive_provider_event(
-            provider_code, request.body, event
-        )
+        event_id, lock_token = self._receive_provider_event(provider_code, request.body, event)
         if lock_token is None:
             return self._webhook_result(event_id)
 
-        context = self._load_attempt_by_provider_job(
-            provider_code, event.provider_job_id
-        )
+        context = self._load_attempt_by_provider_job(provider_code, event.provider_job_id)
         if context is None:
             self._reset_provider_event(event_id, lock_token)
             return self._webhook_result(event_id)
@@ -354,6 +437,81 @@ class GenerationExecutionService:
                 status=attempt.status,
             )
 
+    def _reserve_poll(self, context: AttemptContext) -> PollReservation:
+        """Persist one poll slot before the external call so crashes consume its budget."""
+
+        with self._session_factory() as db:
+            attempt = db.get(GenerationAttempt, context.attempt_id)
+            if attempt is None:
+                return PollReservation(0, acquired=False, exhausted=False)
+            poll_count = (
+                db.scalar(
+                    select(func.count())
+                    .select_from(JobEvent)
+                    .where(
+                        JobEvent.attempt_id == attempt.id,
+                        JobEvent.event_type == "provider.poll_started",
+                    )
+                )
+                or 0
+            )
+            created_at = attempt.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            deadline_at = created_at.astimezone(UTC) + self._polling.deadline
+            if attempt.status not in {
+                AttemptStatus.SUBMITTING,
+                AttemptStatus.SUBMITTED,
+                AttemptStatus.RUNNING,
+            }:
+                return PollReservation(
+                    poll_count,
+                    acquired=False,
+                    exhausted=False,
+                )
+            if self._now() >= deadline_at or poll_count >= self._polling.maximum_polls:
+                return PollReservation(
+                    poll_count,
+                    acquired=False,
+                    exhausted=True,
+                )
+
+            next_poll_count = poll_count + 1
+            db.add(
+                JobEvent(
+                    job_id=attempt.job_id,
+                    attempt_id=attempt.id,
+                    event_type="provider.poll_started",
+                    from_status=attempt.status.value,
+                    to_status=attempt.status.value,
+                    dedup_key=f"attempt:{attempt.id}:poll:{next_poll_count}:v1",
+                    payload_json={
+                        "poll_count": next_poll_count,
+                        "deadline_at": deadline_at.isoformat(),
+                    },
+                )
+            )
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                return PollReservation(
+                    next_poll_count,
+                    acquired=False,
+                    exhausted=False,
+                )
+            return PollReservation(
+                next_poll_count,
+                acquired=True,
+                exhausted=False,
+            )
+
+    def _now(self) -> datetime:
+        now = self._clock()
+        if now.tzinfo is None:
+            raise ValueError("provider execution clock must be timezone-aware")
+        return now.astimezone(UTC)
+
     def _load_attempt_by_provider_job(
         self, provider_code: str, provider_job_id: str
     ) -> AttemptContext | None:
@@ -424,38 +582,47 @@ class GenerationExecutionService:
 
     def _apply_provider_result(
         self, context: AttemptContext, result: PollResult
-    ) -> bool:
+    ) -> ProviderResultAction:
         if result.provider_job_id and context.provider_job_id is None:
             self._record_submit_accepted(context, result.provider_job_id, reconciled=True)
             refreshed = self._load_attempt_by_provider_job(
                 context.provider_code, result.provider_job_id
             )
             if refreshed is None:
-                return False
+                return ProviderResultAction.WAIT
             context = refreshed
         if result.status in {ProviderStatus.PENDING, ProviderStatus.RUNNING}:
-            return False
+            return ProviderResultAction.WAIT
         if result.status == ProviderStatus.UNKNOWN:
             self._record_reconcile_pending(context)
-            return False
+            return ProviderResultAction.WAIT
+        return self._complete_provider_result(context, result)
+
+    def _complete_provider_result(
+        self, context: AttemptContext, result: PollResult
+    ) -> ProviderResultAction:
+        """Single idempotent completion path for polling, webhooks, and cancellation."""
+
         if result.status == ProviderStatus.SUCCEEDED:
             if result.output is not None:
                 self._finish_output(context, result.output)
-                return False
+                return ProviderResultAction.COMPLETE
             result = PollResult(
                 status=ProviderStatus.FAILED,
                 provider_job_id=result.provider_job_id,
-                failure=ProviderFailure(
-                    FailureCode.OUTPUT_MISSING, "Provider 未返回输出"
-                ),
+                failure=ProviderFailure(FailureCode.OUTPUT_MISSING, "Provider 未返回输出"),
             )
         if result.status == ProviderStatus.CANCELLED:
             self._finish_cancelled(context)
-            return False
+            return ProviderResultAction.COMPLETE
         failure = result.failure or ProviderFailure(
             FailureCode.INTERNAL_ERROR, "Provider 返回未分类错误"
         )
-        return self._fail_attempt(context, failure)
+        return (
+            ProviderResultAction.RETRY
+            if self._fail_attempt(context, failure)
+            else ProviderResultAction.COMPLETE
+        )
 
     def _receive_provider_event(
         self,
@@ -691,7 +858,13 @@ class GenerationExecutionService:
                 )
             )
 
-    def _fail_attempt(self, context: AttemptContext, failure: ProviderFailure) -> bool:
+    def _fail_attempt(
+        self,
+        context: AttemptContext,
+        failure: ProviderFailure,
+        *,
+        target: AttemptStatus | None = None,
+    ) -> bool:
         retryable = is_retryable_failure(failure.code)
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
@@ -722,15 +895,16 @@ class GenerationExecutionService:
                 finish_reservation(db, job, settle=False)
                 db.commit()
                 return False
-            target = (
+            target = target or (
                 AttemptStatus.FAILED_RETRYABLE if retryable else AttemptStatus.FAILED_FINAL
             )
+            timed_out = target == AttemptStatus.TIMED_OUT
             if not transition_attempt(
                 db,
                 attempt,
                 target,
-                "attempt.failed",
-                f"attempt:{attempt.id}:terminal-failed:v1",
+                "attempt.timed_out" if timed_out else "attempt.failed",
+                f"attempt:{attempt.id}:terminal-{'timed-out' if timed_out else 'failed'}:v1",
                 {"failure_code": failure.code.value},
             ):
                 return False

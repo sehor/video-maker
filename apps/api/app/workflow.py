@@ -1,5 +1,6 @@
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Protocol
 
 import structlog
@@ -15,6 +16,16 @@ class GenerationWorkflowInput(BaseModel):
     job_id: uuid.UUID
     idempotency_key: str = Field(min_length=1, max_length=255)
     payload: dict[str, object]
+
+
+class GenerationStepResult(BaseModel):
+    """Validated child-task result consumed by the durable orchestrator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_complete: bool
+    poll_count: int = Field(ge=0)
+    retry_after_ms: int = Field(ge=0, le=300_000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +55,49 @@ class HatchetWorkflowRunnable(Protocol):
         *,
         wait_for_result: bool,
     ) -> object: ...
+
+
+class HatchetGenerationStepRunnable(Protocol):
+    async def aio_run(
+        self,
+        input: GenerationWorkflowInput,
+        *,
+        wait_for_result: bool,
+        child_key: str,
+    ) -> object: ...
+
+
+class DurablePollingContext(Protocol):
+    async def aio_sleep_for(
+        self,
+        duration: timedelta,
+        label: str | None = None,
+    ) -> object: ...
+
+
+async def run_durable_generation(
+    input: GenerationWorkflowInput,
+    context: DurablePollingContext,
+    step: HatchetGenerationStepRunnable,
+) -> dict[str, str]:
+    """Replay-safe durable loop; PostgreSQL remains the execution source of truth."""
+
+    step_index = 1
+    while True:
+        raw_result = await step.aio_run(
+            input,
+            wait_for_result=True,
+            child_key=f"job:{input.job_id}:provider-step:{step_index}:v1",
+        )
+        result = GenerationStepResult.model_validate(raw_result)
+        if result.is_complete:
+            return {"job_id": str(input.job_id)}
+        if result.retry_after_ms:
+            await context.aio_sleep_for(
+                timedelta(milliseconds=result.retry_after_ms),
+                label=f"provider-poll-{result.poll_count}",
+            )
+        step_index += 1
 
 
 class HatchetWorkflowStarter:

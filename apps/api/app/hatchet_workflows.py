@@ -13,7 +13,7 @@ from hatchet_sdk.config import ClientConfig, ClientTLSConfig
 from app.config import get_settings
 from app.provider_execution import GenerationExecutionService
 from app.storage import LocalObjectStorage
-from app.workflow import GenerationWorkflowInput
+from app.workflow import GenerationWorkflowInput, run_durable_generation
 
 logger = structlog.get_logger()
 
@@ -53,44 +53,47 @@ generation_workflow = hatchet.workflow(
 
 
 @hatchet.task(
-    name="GenerationSubmit",
+    name="GenerationProviderStep",
     version="v1",
     input_validator=GenerationWorkflowInput,
 )
-async def generation_submit(
+async def generation_provider_step(
     input: GenerationWorkflowInput,
     _context: Context,
-) -> dict[str, str]:
+) -> dict[str, object]:
     logger.info(
         "hatchet.child_started",
         job_id=str(input.job_id),
-        child_key=f"job:{input.job_id}:submit:v1",
+        child_kind="provider_step",
     )
     settings = get_settings()
     store = LocalObjectStorage(
         settings.storage_root,
         settings.storage_claim_secret.get_secret_value().encode(),
     )
-    await GenerationExecutionService(store).execute(input.job_id)
+    result = await GenerationExecutionService(store).execute(input.job_id)
     logger.info(
         "hatchet.child_completed",
         job_id=str(input.job_id),
-        child_key=f"job:{input.job_id}:submit:v1",
+        child_kind="provider_step",
+        is_complete=result.is_complete,
+        poll_count=result.poll_count,
     )
-    return {"job_id": str(input.job_id)}
+    return {
+        "is_complete": result.is_complete,
+        "poll_count": result.poll_count,
+        "retry_after_ms": int(result.retry_after.total_seconds() * 1000)
+        if result.retry_after is not None
+        else 0,
+    }
 
 
 @generation_workflow.durable_task(name="Orchestrate")
 async def orchestrate_generation(
     input: GenerationWorkflowInput,
-    _context: DurableContext,
+    context: DurableContext,
 ) -> dict[str, str]:
-    await generation_submit.aio_run(
-        input,
-        wait_for_result=True,
-        child_key=f"job:{input.job_id}:submit:v1",
-    )
-    return {"job_id": str(input.job_id)}
+    return await run_durable_generation(input, context, generation_provider_step)
 
 
-WORKFLOWS = [generation_workflow, generation_submit]
+WORKFLOWS = [generation_workflow, generation_provider_step]

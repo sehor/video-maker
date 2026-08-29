@@ -86,6 +86,17 @@ class PendingCancelProvider(PendingProvider):
         return CancelResult(accepted=True, status=ProviderStatus.PENDING)
 
 
+class LateSuccessProvider(PendingCancelProvider):
+    def __init__(self, webhook_secret: str) -> None:
+        super().__init__(webhook_secret=webhook_secret)
+        self.succeeded = False
+
+    async def poll(self, attempt: ProviderAttempt) -> PollResult:
+        if not self.succeeded:
+            return await super().poll(attempt)
+        return await MockVideoProvider.poll(self, attempt)
+
+
 def running_job(
     raw_client: TestClient, provider: MockVideoProvider
 ) -> tuple[dict, GenerationExecutionService]:
@@ -323,6 +334,34 @@ def test_submitted_cancel_waits_for_provider_confirmation(
     assert cancelled["settlement_status"] == "RELEASED"
     assert ledger_count(running["id"], "RELEASE") == 1
     assert ledger_count(running["id"], "SETTLE") == 0
+
+
+def test_late_success_after_cancel_request_settles_once(
+    raw_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = LateSuccessProvider(webhook_secret=WEBHOOK_SECRET)
+    running, executor = running_job(raw_client, provider)
+    monkeypatch.setattr(api_module, "provider_executor", lambda _: executor)
+
+    response = raw_client.post(
+        f"/v1/generations/{running['id']}/cancel",
+        headers={"Idempotency-Key": "cancel-before-late-success"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCEL_REQUESTED"
+
+    provider.succeeded = True
+    provider_job_id = running["attempts"][0]["provider_job_id"]
+    success = webhook_body("evt-late-success", provider_job_id, ProviderStatus.SUCCEEDED)
+    asyncio.run(executor.handle_webhook("mock", request_for(success)))
+    late_cancel = webhook_body("evt-late-cancel", provider_job_id, ProviderStatus.CANCELLED)
+    asyncio.run(executor.handle_webhook("mock", request_for(late_cancel)))
+
+    completed = raw_client.get(f"/v1/generations/{running['id']}").json()
+    assert completed["status"] == "SUCCEEDED"
+    assert completed["settlement_status"] == "SETTLED"
+    assert ledger_count(running["id"], "SETTLE") == 1
+    assert ledger_count(running["id"], "RELEASE") == 0
 
 
 def test_duplicate_final_failure_releases_once(raw_client: TestClient) -> None:
