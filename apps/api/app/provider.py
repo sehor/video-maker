@@ -139,13 +139,16 @@ class ProviderFailure:
 
 @dataclass(frozen=True, slots=True)
 class ProviderOutput:
-    content: bytes
-    media_type: str
-    duration_ms: int
-    width: int
-    height: int
-    fps: float
-    codec: str
+    content: bytes | None = None
+    media_type: str = "video/mp4"
+    duration_ms: int | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    codec: str | None = None
+    object_key: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

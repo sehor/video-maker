@@ -10,9 +10,11 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.artifacts import ArtifactReceiptError, RemoteArtifactReceiver
 from app.config import get_settings
 from app.db import SessionLocal
 from app.ledger import finish_reservation
+from app.media import MediaPolicy, MediaValidator, create_media_validator
 from app.models import (
     AttemptStatus,
     GenerationAttempt,
@@ -165,6 +167,7 @@ class GenerationExecutionService:
         session_factory: sessionmaker[Session] = SessionLocal,
         polling_policy: ProviderPollingPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
+        media_validator: MediaValidator | None = None,
     ) -> None:
         self._storage = storage
         self._provider_override = provider
@@ -175,6 +178,11 @@ class GenerationExecutionService:
         self._session_factory = session_factory
         self._polling = polling_policy or ProviderPollingPolicy()
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._artifact_receiver = RemoteArtifactReceiver(
+            storage,
+            media_validator or create_media_validator(get_settings()),
+            max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
+        )
 
     def _provider_for(self, provider_code: str) -> VideoProvider:
         if self._provider_override is not None:
@@ -201,7 +209,7 @@ class GenerationExecutionService:
         if route.requires_input_claim and input_claim is None:
             raise RuntimeError("route requires a reference asset claim")
         output_claim = self._storage.write_claim(
-            f"provider-outputs/{context.job_id}",
+            f"provider-outputs/{context.job_id}/{context.attempt_id}",
             mime_type="video/mp4",
             max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
             expires_in=self._claim_ttl,
@@ -971,6 +979,110 @@ class GenerationExecutionService:
         return AttemptBudget(total_attempts=total or 0, candidate_attempts=candidate or 0)
 
     def _finish_output(self, context: AttemptContext, output: ProviderOutput) -> None:
+        if output.object_key is not None:
+            self._finish_remote_output(context, output)
+            return
+        self._finish_embedded_output(context, output)
+
+    def _finish_remote_output(
+        self, context: AttemptContext, output: ProviderOutput
+    ) -> None:
+        try:
+            published = self._artifact_receiver.receive_and_publish(
+                job_id=context.job_id,
+                attempt_id=context.attempt_id,
+                output=output,
+                policy=MediaPolicy(
+                    expected_duration_ms=context.duration_ms,
+                    expected_aspect_ratio=context.aspect_ratio,
+                ),
+            )
+        except ArtifactReceiptError as exc:
+            self._fail_attempt(context, exc.failure)
+            return
+
+        stored = published.stored
+        facts = published.facts
+        try:
+            with self._session_factory() as db:
+                job = db.get(GenerationJob, context.job_id)
+                attempt = db.get(GenerationAttempt, context.attempt_id)
+                if (
+                    job is None
+                    or attempt is None
+                    or job.status not in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
+                    or attempt.status != AttemptStatus.RUNNING
+                ):
+                    self._storage.delete(stored.key)
+                    return
+                if not transition_job(
+                    db,
+                    job,
+                    JobStatus.POSTPROCESSING,
+                    "output.postprocessing",
+                    f"attempt:{attempt.id}:postprocessing:v1",
+                ) or not transition_job(
+                    db,
+                    job,
+                    JobStatus.VALIDATING,
+                    "output.validating",
+                    f"attempt:{attempt.id}:validating:v1",
+                ):
+                    db.rollback()
+                    self._storage.delete(stored.key)
+                    return
+                generated = GenerationOutput(
+                    job_id=job.id,
+                    attempt_id=attempt.id,
+                    object_key=stored.key,
+                    media_type=stored.mime_type,
+                    duration_ms=facts.duration_ms,
+                    width=facts.width,
+                    height=facts.height,
+                    fps=facts.frame_rate,
+                    codec=facts.codec,
+                    size_bytes=stored.size_bytes,
+                    sha256=stored.sha256,
+                    validation_status=OutputValidationStatus.VALID,
+                )
+                db.add(generated)
+                db.flush()
+                job.final_output_id = generated.id
+                if not transition_job(
+                    db,
+                    job,
+                    JobStatus.SUCCEEDED,
+                    "provider.completed",
+                    f"job:{job.id}:terminal-succeeded:v1",
+                    {"output_id": str(generated.id)},
+                ) or not transition_attempt(
+                    db,
+                    attempt,
+                    AttemptStatus.SUCCEEDED,
+                    "attempt.succeeded",
+                    f"attempt:{attempt.id}:terminal-succeeded:v1",
+                    {"output_id": str(generated.id)},
+                ):
+                    db.rollback()
+                    self._storage.delete(stored.key)
+                    return
+                job.finished_at = datetime.now(UTC)
+                attempt.finished_at = datetime.now(UTC)
+                finish_reservation(db, job, settle=True)
+                db.commit()
+        except Exception:
+            self._storage.delete(stored.key)
+            raise
+
+    def _finish_embedded_output(
+        self, context: AttemptContext, output: ProviderOutput
+    ) -> None:
+        if output.content is None:
+            self._fail_attempt(
+                context,
+                ProviderFailure(FailureCode.OUTPUT_MISSING, "Provider 未返回输出"),
+            )
+            return
         claim = self._storage.write_claim(
             "outputs",
             mime_type=output.media_type,
