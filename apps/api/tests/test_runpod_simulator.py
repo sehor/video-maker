@@ -27,11 +27,13 @@ from app.simulators import (
 
 CLAIM_SECRET = b"deterministic-fake-r2-claim-secret-32-bytes"
 ATTEMPT_ID = uuid.UUID("791d3a69-93bb-4703-b7ee-2b4cc9808f72")
+JOB_ID = uuid.UUID("3b59a290-7f80-4d80-a651-9786225e17d1")
 PNG = b"\x89PNG\r\n\x1a\nsimulated-r2-object"
 
 
 def submit_request(*, mode: str = "success") -> SubmitRequest:
     return SubmitRequest(
+        job_id=JOB_ID,
         attempt_id=ATTEMPT_ID,
         idempotency_key=f"attempt:{ATTEMPT_ID}:submit:v1",
         prompt="deterministic offline fixture",
@@ -39,7 +41,10 @@ def submit_request(*, mode: str = "success") -> SubmitRequest:
         duration_ms=5_000,
         aspect_ratio="16:9",
         resolution="720p",
-        workflow_version="fast_wan_i2v_720_v1",
+        workflow_id="fast_wan_i2v_720_v1",
+        input_claim="c3lzdGVtLWlucHV0.c2lnbmF0dXJl",
+        output_claim="c3lzdGVtLW91dHB1dA.c2lnbmF0dXJl",
+        callback_claim="c3lzdGVtLWNhbGxiYWNr.c2lnbmF0dXJl",
         mode=mode,
     )
 
@@ -186,6 +191,23 @@ def test_webhook_is_explicitly_disabled_for_the_offline_simulator() -> None:
         asyncio.run(
             simulator.verify_webhook(WebhookVerificationRequest(headers={}, body=b"{}"))
         )
+
+
+@pytest.mark.parametrize(
+    "invalid_request",
+    [
+        replace(submit_request(), workflow_id="user-workflow"),
+        replace(submit_request(), input_claim="https://attacker.invalid/input.png"),
+        replace(submit_request(), output_claim="https://attacker.invalid/output.mp4"),
+        replace(submit_request(), callback_claim="https://attacker.invalid/callback"),
+    ],
+)
+def test_simulator_rejects_uncontrolled_workflow_and_urls(
+    invalid_request: SubmitRequest,
+) -> None:
+    simulator = DeterministicRunPodSimulator(clock=ManualClock())
+    with pytest.raises(ValueError):
+        asyncio.run(simulator.submit(invalid_request))
 
 
 def test_fake_remote_storage_has_signed_claims_and_stable_object_metadata() -> None:

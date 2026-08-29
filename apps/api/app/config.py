@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     outbox_dispatcher_enabled: bool = True
     outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
     mock_provider_webhook_secret: str | None = None
+    generation_route_version: Literal[
+        "mock_video_v1", "runpod_simulated_v1"
+    ] = "mock_video_v1"
+    generation_route_enabled: bool = True
+    runpod_simulator_enabled: bool = True
+    runpod_provider_enabled: bool = False
+    provider_callback_claim_secret: SecretStr = SecretStr(
+        "development-only-provider-callback-claim-secret"
+    )
+    provider_claim_ttl_seconds: Annotated[int, Field(gt=0, le=900)] = 300
     provider_webhook_max_bytes: Annotated[int, Field(gt=0, le=1_048_576)] = 65_536
     ffprobe_binary: str = "ffprobe"
     ffmpeg_binary: str = "ffmpeg"
@@ -55,10 +65,25 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_development_claim_secret_in_production(self) -> "Settings":
         secret = self.storage_claim_secret.get_secret_value()
+        callback_secret = self.provider_callback_claim_secret.get_secret_value()
         if len(secret.encode()) < 32:
             raise ValueError("STORAGE_CLAIM_SECRET must contain at least 32 bytes")
+        if len(callback_secret.encode()) < 32:
+            raise ValueError(
+                "PROVIDER_CALLBACK_CLAIM_SECRET must contain at least 32 bytes"
+            )
         if self.environment == "production" and secret.startswith("development-only-"):
             raise ValueError("STORAGE_CLAIM_SECRET must be replaced in production")
+        if self.environment == "production" and callback_secret.startswith(
+            "development-only-"
+        ):
+            raise ValueError(
+                "PROVIDER_CALLBACK_CLAIM_SECRET must be replaced in production"
+            )
+        if self.runpod_provider_enabled:
+            raise ValueError(
+                "RUNPOD_PROVIDER_ENABLED cannot be enabled before the real adapter is installed"
+            )
         return self
 
 

@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import get_settings
 from app.db import SessionLocal
 from app.ledger import finish_reservation
 from app.models import (
@@ -18,13 +19,14 @@ from app.models import (
     JobEvent,
     JobStatus,
     OutputValidationStatus,
+    ProjectAsset,
     ProviderEventInbox,
     ProviderEventInboxStatus,
     Shot,
+    ShotReference,
 )
 from app.provider import (
     FailureCode,
-    MockVideoProvider,
     PollResult,
     ProviderAttempt,
     ProviderEvent,
@@ -36,6 +38,15 @@ from app.provider import (
     VideoProvider,
     WebhookVerificationRequest,
     is_retryable_failure,
+)
+from app.provider_registry import ProviderRegistry
+from app.routing import (
+    MAX_PROVIDER_OUTPUT_BYTES,
+    CallbackClaimIssuer,
+    RouteRegistry,
+    get_callback_claim_issuer,
+    get_provider_registry,
+    get_route_registry,
 )
 from app.state_machine import transition_attempt, transition_job
 from app.storage import ObjectStorage
@@ -66,6 +77,8 @@ class AttemptContext:
     provider_code: str
     provider_job_id: str | None
     workflow_version: str
+    route_candidate_id: uuid.UUID | None
+    reference_object_key: str | None
     prompt: str
     negative_prompt: str | None
     duration_ms: int
@@ -100,14 +113,76 @@ class GenerationExecutionService:
         self,
         storage: ObjectStorage,
         provider: VideoProvider | None = None,
+        provider_registry: ProviderRegistry | None = None,
+        route_registry: RouteRegistry | None = None,
+        callback_claim_issuer: CallbackClaimIssuer | None = None,
         session_factory: sessionmaker[Session] = SessionLocal,
     ) -> None:
         self._storage = storage
-        self._provider = provider or MockVideoProvider()
+        self._provider_override = provider
+        self._providers = provider_registry or get_provider_registry()
+        self._routes = route_registry or get_route_registry()
+        self._callback_claims = callback_claim_issuer or get_callback_claim_issuer()
+        self._claim_ttl = timedelta(
+            seconds=get_settings().provider_claim_ttl_seconds
+        )
         self._session_factory = session_factory
+
+    def _provider_for(self, provider_code: str) -> VideoProvider:
+        if self._provider_override is not None:
+            return self._provider_override
+        return self._providers.get(provider_code)
+
+    def _submit_request(self, context: AttemptContext) -> SubmitRequest:
+        if context.route_candidate_id is None:
+            raise RuntimeError("generation attempt has no immutable route candidate")
+        route = self._routes.by_candidate_id(context.route_candidate_id)
+        if (
+            route.provider_code != context.provider_code
+            or route.workflow_id != context.workflow_version
+        ):
+            raise RuntimeError("generation attempt does not match its route version")
+        input_claim = (
+            self._storage.read_claim(
+                context.reference_object_key,
+                expires_in=self._claim_ttl,
+            ).token
+            if context.reference_object_key is not None
+            else None
+        )
+        if route.requires_input_claim and input_claim is None:
+            raise RuntimeError("route requires a reference asset claim")
+        output_claim = self._storage.write_claim(
+            f"provider-outputs/{context.job_id}",
+            mime_type="video/mp4",
+            max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
+            expires_in=self._claim_ttl,
+        ).token
+        callback_claim = self._callback_claims.issue(
+            job_id=context.job_id,
+            attempt_id=context.attempt_id,
+            route=route,
+            expires_in=self._claim_ttl,
+        )
+        return SubmitRequest(
+            job_id=context.job_id,
+            attempt_id=context.attempt_id,
+            idempotency_key=context.idempotency_key,
+            prompt=context.prompt,
+            negative_prompt=context.negative_prompt,
+            duration_ms=context.duration_ms,
+            aspect_ratio=context.aspect_ratio,
+            resolution=context.resolution.lower(),
+            workflow_id=context.workflow_version,
+            input_claim=input_claim,
+            output_claim=output_claim,
+            callback_claim=callback_claim,
+            mode=context.mode,
+        )
 
     async def execute(self, job_id: uuid.UUID) -> None:
         while context := self._load_active_attempt(job_id):
+            provider = self._provider_for(context.provider_code)
             if context.status == AttemptStatus.CREATED:
                 if not self._start_submit(context):
                     return
@@ -115,19 +190,7 @@ class GenerationExecutionService:
                 if context is None:
                     return
                 try:
-                    submitted = await self._provider.submit(
-                        SubmitRequest(
-                            attempt_id=context.attempt_id,
-                            idempotency_key=context.idempotency_key,
-                            prompt=context.prompt,
-                            negative_prompt=context.negative_prompt,
-                            duration_ms=context.duration_ms,
-                            aspect_ratio=context.aspect_ratio,
-                            resolution=context.resolution,
-                            workflow_version=context.workflow_version,
-                            mode=context.mode,
-                        )
-                    )
+                    submitted = await provider.submit(self._submit_request(context))
                 except Exception:
                     submitted = None
                 if submitted is not None and submitted.disposition == SubmitDisposition.ACCEPTED:
@@ -149,7 +212,7 @@ class GenerationExecutionService:
                 return
 
             try:
-                result = await self._provider.poll(context.provider_attempt())
+                result = await provider.poll(context.provider_attempt())
             except Exception:
                 self._record_reconcile_pending(context)
                 return
@@ -160,8 +223,9 @@ class GenerationExecutionService:
         context = self._load_active_attempt(job_id)
         if context is None:
             return
+        provider = self._provider_for(context.provider_code)
         try:
-            result = await self._provider.cancel(context.provider_attempt())
+            result = await provider.cancel(context.provider_attempt())
         except Exception as exc:
             logger.warning(
                 "provider.cancel_failed",
@@ -193,7 +257,8 @@ class GenerationExecutionService:
         provider_code: str,
         request: WebhookVerificationRequest,
     ) -> ProviderWebhookResult:
-        event = await self._provider.verify_webhook(request)
+        provider = self._provider_for(provider_code)
+        event = await provider.verify_webhook(request)
         event_id, lock_token = self._receive_provider_event(
             provider_code, request.body, event
         )
@@ -208,7 +273,7 @@ class GenerationExecutionService:
             return self._webhook_result(event_id)
 
         try:
-            result = await self._result_for_event(context, event)
+            result = await self._result_for_event(provider, context, event)
         except Exception as exc:
             self._reset_provider_event(event_id, lock_token)
             logger.warning(
@@ -261,12 +326,25 @@ class GenerationExecutionService:
             shot = db.get(Shot, job.shot_id)
             if attempt is None or shot is None:
                 return None
+            reference_object_key = db.scalar(
+                select(ProjectAsset.object_key)
+                .join(
+                    ShotReference,
+                    (ShotReference.asset_id == ProjectAsset.id)
+                    & (ShotReference.project_id == ProjectAsset.project_id),
+                )
+                .where(ShotReference.shot_id == shot.id)
+                .order_by(ShotReference.created_at, ShotReference.id)
+                .limit(1)
+            )
             return AttemptContext(
                 job_id=job.id,
                 attempt_id=attempt.id,
                 provider_code=attempt.provider_code,
                 provider_job_id=attempt.provider_job_id,
                 workflow_version=attempt.workflow_version,
+                route_candidate_id=job.selected_route_candidate_id,
+                reference_object_key=reference_object_key,
                 prompt=shot.prompt,
                 negative_prompt=None,
                 duration_ms=job.duration_ms,
@@ -292,12 +370,25 @@ class GenerationExecutionService:
             shot = db.get(Shot, job.shot_id) if job is not None else None
             if job is None or shot is None:
                 return None
+            reference_object_key = db.scalar(
+                select(ProjectAsset.object_key)
+                .join(
+                    ShotReference,
+                    (ShotReference.asset_id == ProjectAsset.id)
+                    & (ShotReference.project_id == ProjectAsset.project_id),
+                )
+                .where(ShotReference.shot_id == shot.id)
+                .order_by(ShotReference.created_at, ShotReference.id)
+                .limit(1)
+            )
             return AttemptContext(
                 job_id=job.id,
                 attempt_id=attempt.id,
                 provider_code=attempt.provider_code,
                 provider_job_id=attempt.provider_job_id,
                 workflow_version=attempt.workflow_version,
+                route_candidate_id=job.selected_route_candidate_id,
+                reference_object_key=reference_object_key,
                 prompt=shot.prompt,
                 negative_prompt=None,
                 duration_ms=job.duration_ms,
@@ -308,7 +399,10 @@ class GenerationExecutionService:
             )
 
     async def _result_for_event(
-        self, context: AttemptContext, event: ProviderEvent
+        self,
+        provider: VideoProvider,
+        context: AttemptContext,
+        event: ProviderEvent,
     ) -> PollResult:
         if event.status == ProviderStatus.CANCELLED:
             return PollResult(
@@ -322,7 +416,7 @@ class GenerationExecutionService:
                 failure=event.failure,
             )
         if event.status in {ProviderStatus.SUCCEEDED, ProviderStatus.FAILED}:
-            return await self._provider.poll(context.provider_attempt())
+            return await provider.poll(context.provider_attempt())
         return PollResult(
             status=event.status,
             provider_job_id=event.provider_job_id,

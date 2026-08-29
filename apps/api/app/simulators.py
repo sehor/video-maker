@@ -29,6 +29,7 @@ from app.provider import (
     WebhookVerificationError,
     WebhookVerificationRequest,
     mock_video_fixture,
+    validate_fixed_worker_request,
 )
 from app.storage import (
     ALLOWED_TYPES,
@@ -332,6 +333,10 @@ class DeterministicRunPodSimulator:
         return f"runpod-sim-{value.hex}"
 
     async def submit(self, request: SubmitRequest) -> SubmitResult:
+        validate_fixed_worker_request(
+            request,
+            workflow_id=self._provenance.workflow_id,
+        )
         self._faults.trigger(FaultPoint.RUNPOD_SUBMIT)
         existing_id = self._job_ids_by_idempotency_key.get(request.idempotency_key)
         if existing_id is not None:
@@ -426,6 +431,14 @@ class DeterministicRunPodSimulator:
 
     def jobs(self) -> tuple[SimulatedRunPodJob, ...]:
         return tuple(self.job(job_id) for job_id in sorted(self._jobs))
+
+    def submission(self, provider_job_id: str) -> SubmitRequest:
+        """Return the immutable submitted DTO for contract-test inspection."""
+
+        try:
+            return self._jobs[provider_job_id].request
+        except KeyError as exc:
+            raise KeyError(f"unknown simulated RunPod job: {provider_job_id}") from exc
 
     def _find_job(self, attempt: ProviderAttempt) -> _MutableSimulatedRunPodJob | None:
         provider_job_id = attempt.provider_job_id or self._job_ids_by_idempotency_key.get(

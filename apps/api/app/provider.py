@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -77,6 +78,7 @@ class CostSource(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SubmitRequest:
+    job_id: uuid.UUID
     attempt_id: uuid.UUID
     idempotency_key: str
     prompt: str
@@ -84,8 +86,41 @@ class SubmitRequest:
     duration_ms: int
     aspect_ratio: str
     resolution: str
-    workflow_version: str
+    workflow_id: str
+    input_claim: str | None
+    output_claim: str
+    callback_claim: str
     mode: str = "success"
+
+
+SIGNED_CLAIM_PATTERN = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+
+
+def validate_fixed_worker_request(
+    request: SubmitRequest,
+    *,
+    workflow_id: str,
+) -> None:
+    """Reject anything outside the fixed claim-only worker contract."""
+
+    if request.idempotency_key != f"attempt:{request.attempt_id}:submit:v1":
+        raise ValueError("idempotency key is not bound to attempt_id")
+    if request.workflow_id != workflow_id:
+        raise ValueError("workflow_id is not the configured immutable workflow")
+    if request.duration_ms != 5_000:
+        raise ValueError("only the configured five-second duration is allowed")
+    if request.aspect_ratio not in {"16:9", "9:16"}:
+        raise ValueError("aspect_ratio is not allowed")
+    if request.resolution != "720p":
+        raise ValueError("resolution is not allowed")
+    claims = (request.input_claim, request.output_claim, request.callback_claim)
+    if any(
+        claim is None
+        or "://" in claim
+        or SIGNED_CLAIM_PATTERN.fullmatch(claim) is None
+        for claim in claims
+    ):
+        raise ValueError("worker request requires opaque system-signed claims")
 
 
 @dataclass(frozen=True, slots=True)

@@ -45,11 +45,18 @@ from app.models import (
 )
 from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
 from app.provider import (
-    MockVideoProvider,
     WebhookVerificationError,
     WebhookVerificationRequest,
 )
 from app.provider_execution import GenerationExecutionService
+from app.provider_registry import ProviderNotConfiguredError
+from app.routing import (
+    RouteDisabledError,
+    RouteInputError,
+    RouteVersion,
+    get_provider_registry,
+    get_route_registry,
+)
 from app.schemas import (
     BatchCreate,
     GenerationBatchOut,
@@ -111,14 +118,51 @@ def storage_response(store: ObjectStorage, key: str, media_type: str) -> Streami
 def provider_executor(
     provider_code: str, *, require_webhook_secret: bool = False
 ) -> GenerationExecutionService:
-    if provider_code != "mock":
-        raise not_found("provider")
+    providers = get_provider_registry()
+    try:
+        providers.get(provider_code)
+    except ProviderNotConfiguredError as exc:
+        raise not_found("provider") from exc
     secret = get_settings().mock_provider_webhook_secret
-    if require_webhook_secret and secret is None:
+    if require_webhook_secret and provider_code == "mock" and secret is None:
         raise ApiError(503, "PROVIDER_WEBHOOK_DISABLED", "Provider webhook 未配置")
-    return GenerationExecutionService(
-        storage(), provider=MockVideoProvider(webhook_secret=secret)
+    return GenerationExecutionService(storage(), provider_registry=providers)
+
+
+def active_generation_route() -> RouteVersion:
+    try:
+        return get_route_registry().active()
+    except RouteDisabledError as exc:
+        raise ApiError(503, "ROUTE_DISABLED", "当前生成路线已停止接单") from exc
+
+
+def route_for_shot(
+    db: Session,
+    shot: Shot,
+    *,
+    resolution: str,
+    duration_ms: int,
+    route: RouteVersion | None = None,
+) -> RouteVersion:
+    selected = route or active_generation_route()
+    has_input = (
+        db.scalar(
+            select(ShotReference.id)
+            .where(ShotReference.shot_id == shot.id)
+            .limit(1)
+        )
+        is not None
     )
+    try:
+        selected.require_supported(
+            resolution=resolution,
+            duration_ms=duration_ms,
+            aspect_ratio=shot.aspect_ratio,
+            has_input=has_input,
+        )
+    except RouteInputError as exc:
+        raise ApiError(422, "NO_ROUTE", "当前生成规格没有可用路线") from exc
+    return selected
 
 
 async def dispatch_generation_outbox() -> DispatchResult:
@@ -570,6 +614,12 @@ def generate(
     )
     if shot is None:
         raise not_found("shot")
+    route = route_for_shot(
+        db,
+        shot,
+        resolution="720P",
+        duration_ms=shot.duration_seconds * 1000,
+    )
     job = GenerationJob(
         user_id=user.id,
         project_id=shot.project_id,
@@ -582,6 +632,7 @@ def generate(
         quote_snapshot_json={},
         status=JobStatus.CREATED,
         mock_mode=payload.mock_mode,
+        selected_route_candidate_id=route.candidate_id,
     )
     db.add(job)
     db.flush()
@@ -589,8 +640,9 @@ def generate(
     attempt = GenerationAttempt(
         job_id=job.id,
         attempt_no=1,
-        provider_code="mock",
-        workflow_version="mock:v1",
+        provider_endpoint_id=route.provider_endpoint_id,
+        provider_code=route.provider_code,
+        workflow_version=route.workflow_id,
         status=AttemptStatus.CREATED,
     )
     db.add(attempt)
@@ -627,6 +679,7 @@ def create_batch(
     replay_id = replay_result_id(decision, "generation_batch")
     if replay_id is not None:
         return load_batch(db, replay_id, user.id)
+    route = active_generation_route()
 
     batch = GenerationBatch(
         id=uuid.uuid4(),
@@ -640,6 +693,13 @@ def create_batch(
         [item.quote_id for item in payload.items],
     )
     for item, (quote, shot, snapshot) in zip(payload.items, claimed, strict=True):
+        route_for_shot(
+            db,
+            shot,
+            resolution=quote.resolution,
+            duration_ms=quote.duration_ms,
+            route=route,
+        )
         job = GenerationJob(
             user_id=user.id,
             project_id=shot.project_id,
@@ -658,6 +718,7 @@ def create_batch(
             settlement_status=SettlementStatus.RESERVED,
             reserved_tx_id=batch.reserved_tx_id,
             mock_mode=item.mock_mode,
+            selected_route_candidate_id=route.candidate_id,
         )
         db.add(job)
         db.flush()
@@ -674,8 +735,9 @@ def create_batch(
             GenerationAttempt(
                 job_id=job.id,
                 attempt_no=1,
-                provider_code="mock",
-                workflow_version="mock:v1",
+                provider_endpoint_id=route.provider_endpoint_id,
+                provider_code=route.provider_code,
+                workflow_version=route.workflow_id,
                 status=AttemptStatus.CREATED,
             )
         )

@@ -198,6 +198,8 @@ class WalletOut(BaseModel):
 
 
 class GenerationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     shot_id: uuid.UUID
     quote_id: uuid.UUID
     mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
@@ -206,6 +208,8 @@ class GenerationCreate(BaseModel):
 
 
 class BatchItemCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     quote_id: uuid.UUID
     mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
         "success"
@@ -213,6 +217,8 @@ class BatchItemCreate(BaseModel):
 
 
 class BatchCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     items: list[BatchItemCreate] = Field(min_length=1, max_length=100)
 
     @field_validator("items")
