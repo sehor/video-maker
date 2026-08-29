@@ -121,7 +121,6 @@ def test_simulated_route_submits_bound_claim_only_worker_request(
             json={
                 "shot_id": shot["id"],
                 "quote_id": quote["id"],
-                "mock_mode": "success",
             },
         )
         assert created.status_code == 202
@@ -184,14 +183,13 @@ def test_route_kill_switch_rejects_new_jobs_immediately(raw_client: TestClient) 
             json={
                 "shot_id": shot["id"],
                 "quote_id": quote["id"],
-                "mock_mode": "success",
             },
         )
         assert rejected.status_code == 503
         assert rejected.json()["error"]["code"] == "ROUTE_DISABLED"
         batch_rejected = raw_client.post(
             "/v1/batches",
-            json={"items": [{"quote_id": quote["id"], "mock_mode": "success"}]},
+            json={"items": [{"quote_id": quote["id"]}]},
         )
         assert batch_rejected.status_code == 503
         assert batch_rejected.json()["error"]["code"] == "ROUTE_DISABLED"
@@ -221,7 +219,6 @@ def test_generation_rejects_execution_configuration_injection(
     payload = {
         "shot_id": str(uuid.uuid4()),
         "quote_id": str(uuid.uuid4()),
-        "mock_mode": "success",
         **injected,
     }
     response = raw_client.post("/v1/generations", json=payload)

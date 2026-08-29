@@ -111,6 +111,18 @@ def running_job(
     return running, executor
 
 
+def stored_provider_job_id(job: dict) -> str:
+    with SessionLocal() as db:
+        provider_job_id = db.scalar(
+            select(GenerationAttempt.provider_job_id)
+            .where(GenerationAttempt.job_id == uuid.UUID(job["id"]))
+            .order_by(GenerationAttempt.attempt_no.desc())
+            .limit(1)
+        )
+    assert provider_job_id is not None
+    return provider_job_id
+
+
 def ledger_count(job_id: str, tx_type: str) -> int:
     with SessionLocal() as db:
         return (
@@ -130,7 +142,7 @@ def test_webhook_requires_valid_signature_and_deduplicates_completion(
     raw_client: TestClient,
 ) -> None:
     running, _ = running_job(raw_client, PendingProvider())
-    provider_job_id = running["attempts"][0]["provider_job_id"]
+    provider_job_id = stored_provider_job_id(running)
     body = webhook_body("evt-duplicate", provider_job_id, ProviderStatus.SUCCEEDED)
 
     rejected = raw_client.post(
@@ -186,7 +198,7 @@ def test_poll_and_webhook_race_produces_one_final_result(raw_client: TestClient)
     provider = RacingProvider()
     running, executor = running_job(raw_client, provider)
     body = webhook_body(
-        "evt-race", running["attempts"][0]["provider_job_id"], ProviderStatus.SUCCEEDED
+        "evt-race", stored_provider_job_id(running), ProviderStatus.SUCCEEDED
     )
     provider.armed = True
 
@@ -218,7 +230,7 @@ def test_stale_webhook_claim_is_reconciled_after_lease_expiry(
     running, _ = running_job(raw_client, PendingProvider())
     body = webhook_body(
         "evt-stale-claim",
-        running["attempts"][0]["provider_job_id"],
+        stored_provider_job_id(running),
         ProviderStatus.SUCCEEDED,
     )
     with SessionLocal() as db:
@@ -226,7 +238,7 @@ def test_stale_webhook_claim_is_reconciled_after_lease_expiry(
             ProviderEventInbox(
                 provider_code="mock",
                 external_event_id="evt-stale-claim",
-                provider_job_id=running["attempts"][0]["provider_job_id"],
+                provider_job_id=stored_provider_job_id(running),
                 provider_status=ProviderStatus.SUCCEEDED.value,
                 payload_hash=hashlib.sha256(body).hexdigest(),
                 status=ProviderEventInboxStatus.PROCESSING,
@@ -325,7 +337,7 @@ def test_submitted_cancel_waits_for_provider_confirmation(
 
     body = webhook_body(
         "evt-cancelled",
-        running["attempts"][0]["provider_job_id"],
+        stored_provider_job_id(running),
         ProviderStatus.CANCELLED,
     )
     asyncio.run(executor.handle_webhook("mock", request_for(body)))
@@ -351,7 +363,7 @@ def test_late_success_after_cancel_request_settles_once(
     assert response.json()["status"] == "CANCEL_REQUESTED"
 
     provider.succeeded = True
-    provider_job_id = running["attempts"][0]["provider_job_id"]
+    provider_job_id = stored_provider_job_id(running)
     success = webhook_body("evt-late-success", provider_job_id, ProviderStatus.SUCCEEDED)
     asyncio.run(executor.handle_webhook("mock", request_for(success)))
     late_cancel = webhook_body("evt-late-cancel", provider_job_id, ProviderStatus.CANCELLED)
@@ -369,7 +381,7 @@ def test_duplicate_final_failure_releases_once(raw_client: TestClient) -> None:
     running, executor = running_job(raw_client, provider)
     body = webhook_body(
         "evt-failed",
-        running["attempts"][0]["provider_job_id"],
+        stored_provider_job_id(running),
         ProviderStatus.FAILED,
         failure_code=FailureCode.WORKFLOW_FAILED.value,
     )

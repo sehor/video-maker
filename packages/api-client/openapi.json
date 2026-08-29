@@ -744,67 +744,6 @@
         }
       }
     },
-    "/v1/wallet/test-grants": {
-      "post": {
-        "summary": "Create Test Grant",
-        "operationId": "create_test_grant_v1_wallet_test_grants_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TestGrantCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LedgerTransactionOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/wallet": {
       "get": {
         "summary": "Get Wallet",
@@ -1087,45 +1026,6 @@
         }
       }
     },
-    "/v1/provider-webhooks/{provider_code}": {
-      "post": {
-        "summary": "Receive Provider Webhook",
-        "operationId": "receive_provider_webhook_v1_provider_webhooks__provider_code__post",
-        "parameters": [
-          {
-            "name": "provider_code",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Provider Code"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProviderWebhookAck"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/generations/{job_id}/cancel": {
       "post": {
         "summary": "Cancel Generation",
@@ -1283,6 +1183,7 @@
             "title": "Items"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "items"
@@ -1295,21 +1196,9 @@
             "type": "string",
             "format": "uuid",
             "title": "Quote Id"
-          },
-          "mock_mode": {
-            "type": "string",
-            "enum": [
-              "success",
-              "delayed",
-              "failure",
-              "timeout",
-              "duplicate",
-              "corrupt"
-            ],
-            "title": "Mock Mode",
-            "default": "success"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "quote_id"
@@ -1372,27 +1261,8 @@
             "type": "integer",
             "title": "Attempt No"
           },
-          "provider_code": {
-            "type": "string",
-            "title": "Provider Code"
-          },
           "status": {
             "$ref": "#/components/schemas/AttemptStatus"
-          },
-          "provider_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider Job Id"
-          },
-          "workflow_version": {
-            "type": "string",
-            "title": "Workflow Version"
           },
           "failure_code": {
             "anyOf": [
@@ -1410,10 +1280,7 @@
         "required": [
           "id",
           "attempt_no",
-          "provider_code",
           "status",
-          "provider_job_id",
-          "workflow_version",
           "failure_code"
         ],
         "title": "GenerationAttemptOut"
@@ -1482,21 +1349,9 @@
             "type": "string",
             "format": "uuid",
             "title": "Quote Id"
-          },
-          "mock_mode": {
-            "type": "string",
-            "enum": [
-              "success",
-              "delayed",
-              "failure",
-              "timeout",
-              "duplicate",
-              "corrupt"
-            ],
-            "title": "Mock Mode",
-            "default": "success"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "shot_id",
@@ -1654,10 +1509,6 @@
             ],
             "title": "Error Message"
           },
-          "mock_mode": {
-            "type": "string",
-            "title": "Mock Mode"
-          },
           "attempts": {
             "items": {
               "$ref": "#/components/schemas/GenerationAttemptOut"
@@ -1671,13 +1522,6 @@
             },
             "type": "array",
             "title": "Outputs"
-          },
-          "events": {
-            "items": {
-              "$ref": "#/components/schemas/JobEventOut"
-            },
-            "type": "array",
-            "title": "Events"
           },
           "created_at": {
             "type": "string",
@@ -1707,7 +1551,6 @@
           "final_output_id",
           "failure_code",
           "error_message",
-          "mock_mode",
           "created_at",
           "updated_at"
         ],
@@ -1824,61 +1667,6 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
-      },
-      "JobEventOut": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "attempt_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Attempt Id"
-          },
-          "event_type": {
-            "type": "string",
-            "title": "Event Type"
-          },
-          "from_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "From Status"
-          },
-          "to_status": {
-            "type": "string",
-            "title": "To Status"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "attempt_id",
-          "event_type",
-          "from_status",
-          "to_status",
-          "created_at"
-        ],
-        "title": "JobEventOut"
       },
       "JobStatus": {
         "type": "string",
@@ -2204,33 +1992,6 @@
         },
         "type": "object",
         "title": "ProjectUpdate"
-      },
-      "ProviderEventInboxStatus": {
-        "type": "string",
-        "enum": [
-          "RECEIVED",
-          "PROCESSING",
-          "PROCESSED",
-          "IGNORED"
-        ],
-        "title": "ProviderEventInboxStatus"
-      },
-      "ProviderWebhookAck": {
-        "properties": {
-          "event_id": {
-            "type": "string",
-            "title": "Event Id"
-          },
-          "status": {
-            "$ref": "#/components/schemas/ProviderEventInboxStatus"
-          }
-        },
-        "type": "object",
-        "required": [
-          "event_id",
-          "status"
-        ],
-        "title": "ProviderWebhookAck"
       },
       "QuoteCreate": {
         "properties": {
@@ -2603,43 +2364,6 @@
         },
         "type": "object",
         "title": "ShotUpdate"
-      },
-      "TestGrantCreate": {
-        "properties": {
-          "tier": {
-            "type": "string",
-            "maxLength": 24,
-            "minLength": 1,
-            "pattern": "^[A-Z][A-Z0-9_]*$",
-            "title": "Tier"
-          },
-          "amount_ms": {
-            "type": "integer",
-            "maximum": 86400000.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Amount Ms"
-          },
-          "idempotency_key": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "type": "object",
-        "required": [
-          "tier",
-          "amount_ms",
-          "idempotency_key",
-          "reason"
-        ],
-        "title": "TestGrantCreate"
       },
       "ValidationError": {
         "properties": {

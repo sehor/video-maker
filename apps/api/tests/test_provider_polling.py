@@ -38,7 +38,8 @@ def _create_simulated_job(client: TestClient, *, mode: str = "success") -> uuid.
     shot, quote, _ = _quoted_shot(client, with_reference=True)
     created = client.post(
         "/v1/generations",
-        json={"shot_id": shot["id"], "quote_id": quote["id"], "mock_mode": mode},
+        headers={"x-test-generation-modes": mode},
+        json={"shot_id": shot["id"], "quote_id": quote["id"]},
     )
     assert created.status_code == 202
     return uuid.UUID(created.json()["id"])

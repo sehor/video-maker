@@ -10,10 +10,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
-from app.auth import CurrentUser
+from app.auth import AdminUser, CurrentUser
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.errors import ApiError, not_found
+from app.generation_options import (
+    InternalGenerationOptions,
+    get_internal_generation_options,
+)
 from app.idempotency import acquire, complete, replay_result_id
 from app.ledger import (
     create_quote,
@@ -58,6 +62,7 @@ from app.routing import (
     get_route_registry,
 )
 from app.schemas import (
+    AdminGenerationDiagnosticsOut,
     BatchCreate,
     GenerationBatchOut,
     GenerationCreate,
@@ -89,6 +94,9 @@ from app.workflow import HatchetWorkflowStarter
 router = APIRouter(prefix="/v1")
 Db = Annotated[Session, Depends(get_db)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
+GenerationOptions = Annotated[
+    InternalGenerationOptions, Depends(get_internal_generation_options)
+]
 workflow_starter = HatchetWorkflowStarter()
 
 
@@ -528,7 +536,12 @@ def create_generation_quote(
     return quote
 
 
-@router.post("/wallet/test-grants", response_model=LedgerTransactionOut, status_code=201)
+@router.post(
+    "/wallet/test-grants",
+    response_model=LedgerTransactionOut,
+    status_code=201,
+    include_in_schema=False,
+)
 def create_test_grant(
     payload: TestGrantCreate,
     user: CurrentUser,
@@ -597,6 +610,7 @@ def generate(
     payload: GenerationCreate,
     user: CurrentUser,
     db: Db,
+    generation_options: GenerationOptions,
     idempotency_key: IdempotencyKey = None,
 ) -> GenerationJob:
     decision = acquire(
@@ -631,7 +645,7 @@ def generate(
         variant_index=0,
         quote_snapshot_json={},
         status=JobStatus.CREATED,
-        mock_mode=payload.mock_mode,
+        mock_mode=generation_options.mode_for(0),
         selected_route_candidate_id=route.candidate_id,
     )
     db.add(job)
@@ -667,6 +681,7 @@ def create_batch(
     payload: BatchCreate,
     user: CurrentUser,
     db: Db,
+    generation_options: GenerationOptions,
     idempotency_key: IdempotencyKey = None,
 ) -> GenerationBatch:
     decision = acquire(
@@ -692,7 +707,9 @@ def create_batch(
         batch,
         [item.quote_id for item in payload.items],
     )
-    for item, (quote, shot, snapshot) in zip(payload.items, claimed, strict=True):
+    for index, (_item, (quote, shot, snapshot)) in enumerate(
+        zip(payload.items, claimed, strict=True)
+    ):
         route_for_shot(
             db,
             shot,
@@ -717,7 +734,7 @@ def create_batch(
             reserved_amount_ms=quote.reserved_ms,
             settlement_status=SettlementStatus.RESERVED,
             reserved_tx_id=batch.reserved_tx_id,
-            mock_mode=item.mock_mode,
+            mock_mode=generation_options.mode_for(index),
             selected_route_candidate_id=route.candidate_id,
         )
         db.add(job)
@@ -772,10 +789,31 @@ def get_generation(job_id: uuid.UUID, user: CurrentUser, db: Db) -> GenerationJo
     return load_job(db, job_id, user.id)
 
 
+@router.get(
+    "/admin/generations/{job_id}",
+    response_model=AdminGenerationDiagnosticsOut,
+    include_in_schema=False,
+)
+def get_admin_generation_diagnostics(
+    job_id: uuid.UUID,
+    _admin: AdminUser,
+    db: Db,
+) -> GenerationJob:
+    job = db.scalar(
+        select(GenerationJob)
+        .where(GenerationJob.id == job_id)
+        .options(selectinload(GenerationJob.attempts))
+    )
+    if job is None:
+        raise not_found("job")
+    return job
+
+
 @router.post(
     "/provider-webhooks/{provider_code}",
     response_model=ProviderWebhookAck,
     status_code=202,
+    include_in_schema=False,
 )
 async def receive_provider_webhook(
     provider_code: str,

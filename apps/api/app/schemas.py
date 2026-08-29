@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models import (
     AttemptStatus,
@@ -202,18 +202,12 @@ class GenerationCreate(BaseModel):
 
     shot_id: uuid.UUID
     quote_id: uuid.UUID
-    mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
-        "success"
-    )
 
 
 class BatchItemCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quote_id: uuid.UUID
-    mock_mode: Literal["success", "delayed", "failure", "timeout", "duplicate", "corrupt"] = (
-        "success"
-    )
 
 
 class BatchCreate(BaseModel):
@@ -233,11 +227,13 @@ class BatchCreate(BaseModel):
 class GenerationAttemptOut(OrmModel):
     id: uuid.UUID
     attempt_no: int
-    provider_code: str
     status: AttemptStatus
-    provider_job_id: str | None
-    workflow_version: str
     failure_code: str | None
+
+    @field_validator("failure_code", mode="before")
+    @classmethod
+    def hide_internal_failure_code(cls, value: object) -> object:
+        return _public_failure_code(value)
 
 
 class GenerationOutputOut(OrmModel):
@@ -252,15 +248,6 @@ class GenerationOutputOut(OrmModel):
     size_bytes: int
     sha256: str
     validation_status: OutputValidationStatus
-
-
-class JobEventOut(OrmModel):
-    id: uuid.UUID
-    attempt_id: uuid.UUID | None
-    event_type: str
-    from_status: str | None
-    to_status: str
-    created_at: datetime
 
 
 class GenerationJobOut(OrmModel):
@@ -283,12 +270,18 @@ class GenerationJobOut(OrmModel):
     final_output_id: uuid.UUID | None
     failure_code: str | None
     error_message: str | None
-    mock_mode: str
     attempts: list[GenerationAttemptOut] = Field(default_factory=list)
     outputs: list[GenerationOutputOut] = Field(default_factory=list)
-    events: list[JobEventOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def hide_internal_failure_details(self) -> "GenerationJobOut":
+        public_code = _public_failure_code(self.failure_code)
+        if public_code != self.failure_code:
+            self.failure_code = public_code
+            self.error_message = "生成失败，请稍后重试"
+        return self
 
 
 class GenerationJobList(BaseModel):
@@ -310,3 +303,68 @@ class GenerationBatchOut(OrmModel):
 class ProviderWebhookAck(BaseModel):
     event_id: str
     status: ProviderEventInboxStatus
+
+
+class AdminGenerationAttemptOut(OrmModel):
+    id: uuid.UUID
+    attempt_no: int
+    status: AttemptStatus
+    failure_code: str | None
+    provider_endpoint_id: uuid.UUID | None
+    provider_code: str
+    provider_job_id: str | None
+    workflow_version: str
+    worker_version: str | None
+    image_digest: str | None
+    worker_commit: str | None
+    comfyui_version: str | None
+    comfyui_commit: str | None
+    workflow_hash: str | None
+    model_hashes_json: dict[str, str] | None
+    gpu_type: str | None
+    queue_ms: int | None
+    cold_start_ms: int | None
+    runtime_ms: int | None
+    billable_ms: int | None
+    cost_minor: int | None
+    cost_currency: str | None
+    cost_source: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminGenerationDiagnosticsOut(OrmModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    project_id: uuid.UUID
+    shot_id: uuid.UUID
+    status: JobStatus
+    failure_code: str | None
+    error_message: str | None
+    selected_route_candidate_id: uuid.UUID | None
+    mock_mode: str
+    attempts: list[AdminGenerationAttemptOut] = Field(default_factory=list)
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+_PUBLIC_FAILURE_CODES = {
+    "INVALID_INPUT",
+    "POLICY_REJECTED",
+    "USER_CANCELLED",
+    "UNSUPPORTED_PARAMETER",
+    "NO_ROUTE",
+    "OUTPUT_MISSING",
+    "OUTPUT_CORRUPTED",
+    "OUTPUT_INVALID_MEDIA",
+}
+
+
+def _public_failure_code(value: object) -> object:
+    if value is None or value in _PUBLIC_FAILURE_CODES:
+        return value
+    return "GENERATION_FAILED"

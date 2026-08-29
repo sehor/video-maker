@@ -27,10 +27,15 @@ os.environ["STORAGE_ROOT"] = str(test_runtime_root / "storage")
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
 os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"
+os.environ["ADMIN_AUTH_SUBJECTS"] = "admin-user"
 
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.generation_options import (  # noqa: E402
+    InternalGenerationOptions,
+    get_internal_generation_options,
+)
 from app.main import app  # noqa: E402
 from app.outbox import DispatchResult, OutboxDispatcher  # noqa: E402
 from app.provider_execution import GenerationExecutionService  # noqa: E402
@@ -45,6 +50,16 @@ def test_identity(x_test_user: Annotated[str | None, Header()] = None) -> Identi
 
 
 app.dependency_overrides[get_identity] = test_identity
+
+
+def test_generation_options(
+    x_test_generation_modes: Annotated[str | None, Header()] = None,
+) -> InternalGenerationOptions:
+    modes = tuple(x_test_generation_modes.split(",")) if x_test_generation_modes else ()
+    return InternalGenerationOptions(modes=modes)  # type: ignore[arg-type]
+
+
+app.dependency_overrides[get_internal_generation_options] = test_generation_options
 
 
 @pytest.fixture(autouse=True)

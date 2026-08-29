@@ -4,10 +4,11 @@ import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import GenerationJob
+from app.models import GenerationJob, JobEvent
 from app.provider import (
     RETRYABLE_FAILURE_CODES,
     FailureCode,
@@ -125,7 +126,13 @@ def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClie
     assert len(refreshed["attempts"]) == 1
     assert len(provider.submit_calls) == 1
     assert provider.poll_calls == 2
-    assert {event["event_type"] for event in refreshed["events"]} >= {
+    with SessionLocal() as db:
+        event_types = set(
+            db.scalars(
+                select(JobEvent.event_type).where(JobEvent.job_id == job_id)
+            )
+        )
+    assert event_types >= {
         "provider.submit_unknown",
         "provider.reconciled",
         "attempt.reconciled",

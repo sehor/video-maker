@@ -53,7 +53,8 @@ def quote(client: TestClient, shot_id: str, tier: str = "FAST") -> dict:
 def submit(client: TestClient, shot_id: str, quote_id: str, mode: str = "success"):
     return client.post(
         "/v1/generations",
-        json={"shot_id": shot_id, "quote_id": quote_id, "mock_mode": mode},
+        headers={"x-test-generation-modes": mode},
+        json={"shot_id": shot_id, "quote_id": quote_id},
     )
 
 
@@ -244,7 +245,7 @@ def test_quote_cannot_cross_user_boundary(client: TestClient, monkeypatch) -> No
     response = client.post(
         "/v1/generations",
         headers={"x-test-user": "other"},
-        json={"shot_id": shot["id"], "quote_id": item["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": item["id"]},
     )
     assert response.status_code == 404
 

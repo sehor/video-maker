@@ -179,23 +179,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/wallet/test-grants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Test Grant */
-        post: operations["create_test_grant_v1_wallet_test_grants_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/wallet": {
         parameters: {
             query?: never;
@@ -298,23 +281,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/provider-webhooks/{provider_code}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Receive Provider Webhook */
-        post: operations["receive_provider_webhook_v1_provider_webhooks__provider_code__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/generations/{job_id}/cancel": {
         parameters: {
             query?: never;
@@ -387,12 +353,6 @@ export interface components {
              * Format: uuid
              */
             quote_id: string;
-            /**
-             * Mock Mode
-             * @default success
-             * @enum {string}
-             */
-            mock_mode: "success" | "delayed" | "failure" | "timeout" | "duplicate" | "corrupt";
         };
         /**
          * BatchStatus
@@ -429,13 +389,7 @@ export interface components {
             id: string;
             /** Attempt No */
             attempt_no: number;
-            /** Provider Code */
-            provider_code: string;
             status: components["schemas"]["AttemptStatus"];
-            /** Provider Job Id */
-            provider_job_id: string | null;
-            /** Workflow Version */
-            workflow_version: string;
             /** Failure Code */
             failure_code: string | null;
         };
@@ -481,12 +435,6 @@ export interface components {
              * Format: uuid
              */
             quote_id: string;
-            /**
-             * Mock Mode
-             * @default success
-             * @enum {string}
-             */
-            mock_mode: "success" | "delayed" | "failure" | "timeout" | "duplicate" | "corrupt";
         };
         /** GenerationJobList */
         GenerationJobList: {
@@ -540,14 +488,10 @@ export interface components {
             failure_code: string | null;
             /** Error Message */
             error_message: string | null;
-            /** Mock Mode */
-            mock_mode: string;
             /** Attempts */
             attempts?: components["schemas"]["GenerationAttemptOut"][];
             /** Outputs */
             outputs?: components["schemas"]["GenerationOutputOut"][];
-            /** Events */
-            events?: components["schemas"]["JobEventOut"][];
             /**
              * Created At
              * Format: date-time
@@ -593,27 +537,6 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
-        };
-        /** JobEventOut */
-        JobEventOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Attempt Id */
-            attempt_id: string | null;
-            /** Event Type */
-            event_type: string;
-            /** From Status */
-            from_status: string | null;
-            /** To Status */
-            to_status: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
         };
         /**
          * JobStatus
@@ -755,17 +678,6 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
-        };
-        /**
-         * ProviderEventInboxStatus
-         * @enum {string}
-         */
-        ProviderEventInboxStatus: "RECEIVED" | "PROCESSING" | "PROCESSED" | "IGNORED";
-        /** ProviderWebhookAck */
-        ProviderWebhookAck: {
-            /** Event Id */
-            event_id: string;
-            status: components["schemas"]["ProviderEventInboxStatus"];
         };
         /** QuoteCreate */
         QuoteCreate: {
@@ -939,17 +851,6 @@ export interface components {
             duration_seconds?: number | null;
             /** Aspect Ratio */
             aspect_ratio?: ("16:9" | "9:16") | null;
-        };
-        /** TestGrantCreate */
-        TestGrantCreate: {
-            /** Tier */
-            tier: string;
-            /** Amount Ms */
-            amount_ms: number;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Reason */
-            reason: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -1469,41 +1370,6 @@ export interface operations {
             };
         };
     };
-    create_test_grant_v1_wallet_test_grants_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TestGrantCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LedgerTransactionOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_wallet_v1_wallet_get: {
         parameters: {
             query?: never;
@@ -1674,37 +1540,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationJobOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    receive_provider_webhook_v1_provider_webhooks__provider_code__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                provider_code: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProviderWebhookAck"];
                 };
             };
             /** @description Validation Error */

@@ -103,7 +103,7 @@ def create_pending_job(client: TestClient) -> dict:
     generated = client.post(
         "/v1/generations",
         headers={"Idempotency-Key": f"outbox-generate:{shot['id']}"},
-        json={"shot_id": shot["id"], "quote_id": quoted.json()["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": quoted.json()["id"]},
     )
     assert generated.status_code == 202
     assert generated.json()["status"] == "QUEUED"
@@ -144,7 +144,7 @@ def test_job_reservation_and_outbox_commit_together(client: TestClient) -> None:
         )
     rejected = client.post(
         "/v1/generations",
-        json={"shot_id": shot["id"], "quote_id": quoted.json()["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": quoted.json()["id"]},
     )
     assert rejected.status_code == 409
     with SessionLocal() as db:

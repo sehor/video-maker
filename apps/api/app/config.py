@@ -53,11 +53,12 @@ class Settings(BaseSettings):
     ] = 2_147_483_648
     media_max_output_bytes: Annotated[int, Field(gt=0, le=4_194_304)] = 1_048_576
     media_cpu_count: Annotated[int, Field(gt=0, le=4)] = 1
+    admin_auth_subjects: Annotated[list[str], NoDecode] = []
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("admin_auth_subjects", "cors_origins", mode="before")
     @classmethod
-    def parse_origins(cls, value: object) -> object:
+    def parse_comma_separated_values(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value

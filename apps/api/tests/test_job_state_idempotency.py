@@ -29,7 +29,7 @@ def queued_job(client: TestClient, monkeypatch) -> dict:
     response = client.post(
         "/v1/generations",
         headers={"Idempotency-Key": f"generation:{uuid.uuid4()}"},
-        json={"shot_id": shot["id"], "quote_id": item["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": item["id"]},
     )
     assert response.status_code == 202
     return response.json()
@@ -42,20 +42,26 @@ def test_success_records_complete_job_and_attempt_state_machines(client: TestCli
     response = client.post(
         "/v1/generations",
         headers={"Idempotency-Key": "generation:complete-state-machine"},
-        json={"shot_id": shot["id"], "quote_id": item["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": item["id"]},
     )
     assert response.status_code == 202
     job = client.get(f"/v1/generations/{response.json()['id']}").json()
+    with SessionLocal() as db:
+        events = list(
+            db.scalars(
+                select(JobEvent).where(JobEvent.job_id == uuid.UUID(job["id"]))
+            )
+        )
 
     job_transitions = {
-        (event["from_status"], event["to_status"])
-        for event in job["events"]
-        if event["attempt_id"] is None
+        (event.from_status, event.to_status)
+        for event in events
+        if event.attempt_id is None
     }
     attempt_transitions = {
-        (event["from_status"], event["to_status"])
-        for event in job["events"]
-        if event["attempt_id"] is not None
+        (event.from_status, event.to_status)
+        for event in events
+        if event.attempt_id is not None
     }
     assert job_transitions == {
         ("CREATED", "RESERVED"),
@@ -209,12 +215,14 @@ def test_generation_idempotency_reuses_job_and_rejects_changed_body(
     grant(client, 2_000)
     item = quote(client, shot["id"])
     headers = {"Idempotency-Key": "generation:replay"}
-    payload = {"shot_id": shot["id"], "quote_id": item["id"], "mock_mode": "success"}
+    payload = {"shot_id": shot["id"], "quote_id": item["id"]}
 
     first = client.post("/v1/generations", headers=headers, json=payload)
     replay = client.post("/v1/generations", headers=headers, json=payload)
     conflict = client.post(
-        "/v1/generations", headers=headers, json={**payload, "mock_mode": "delayed"}
+        "/v1/generations",
+        headers=headers,
+        json={**payload, "quote_id": str(uuid.uuid4())},
     )
 
     assert first.status_code == replay.status_code == 202
@@ -286,7 +294,6 @@ def test_stage_two_write_replays_do_not_repeat_grant_quote_or_cancel(
         json={
             "shot_id": shot["id"],
             "quote_id": first_quote.json()["id"],
-            "mock_mode": "success",
         },
     )
     cancel_path = f"/v1/generations/{generation.json()['id']}/cancel"

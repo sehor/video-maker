@@ -42,7 +42,8 @@ def generate(client: TestClient, shot_id: str, mode: str) -> dict:
     assert quoted.status_code == 201
     response = client.post(
         "/v1/generations",
-        json={"shot_id": shot_id, "quote_id": quoted.json()["id"], "mock_mode": mode},
+        headers={"x-test-generation-modes": mode},
+        json={"shot_id": shot_id, "quote_id": quoted.json()["id"]},
     )
     assert response.status_code == 202
     job = response.json()
@@ -80,17 +81,17 @@ def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) 
     failed = generate(client, shot["id"], "failure")
     assert (failed["status"], failed["failure_code"]) == (
         "FAILED_FINAL",
-        "WORKFLOW_FAILED",
+        "GENERATION_FAILED",
     )
     assert len(failed["attempts"]) == 1
     timed_out = generate(client, shot["id"], "timeout")
     assert (timed_out["status"], timed_out["failure_code"]) == (
         "FAILED_FINAL",
-        "NETWORK_TIMEOUT",
+        "GENERATION_FAILED",
     )
     assert len(timed_out["attempts"]) == 2
     assert {attempt["failure_code"] for attempt in timed_out["attempts"]} == {
-        "NETWORK_TIMEOUT"
+        "GENERATION_FAILED"
     }
     corrupt = generate(client, shot["id"], "corrupt")
     assert (corrupt["status"], corrupt["failure_code"]) == (
