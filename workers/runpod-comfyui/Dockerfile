@@ -34,6 +34,7 @@ COPY --from=snapshot /opt/poc/comfy-snapshot.json /opt/video-factory/comfy-snaps
 COPY workers/runpod-comfyui/comfy-lock.yaml /opt/video-factory/comfy-lock.yaml
 COPY workers/runpod-comfyui/contract /opt/video-factory/contract
 COPY workflows/manifests/fast_wan_i2v_720_v1 /opt/video-factory/workflow
+COPY workers/runpod-comfyui/locked-start.sh /opt/video-factory/locked-start.sh
 
 # Manager is a development surface and must not exist in the production image.
 RUN rm -rf \
@@ -42,6 +43,7 @@ RUN rm -rf \
     && test "$(git -C /comfyui rev-parse HEAD)" = "${COMFYUI_COMMIT}" \
     && test ! -e /comfyui/custom_nodes/ComfyUI-Manager \
     && test ! -e /comfyui/custom_nodes/comfyui-manager \
+    && chmod 0555 /opt/video-factory/locked-start.sh \
     && python /opt/video-factory/contract/validate.py \
         --root /opt/video-factory \
         --worker-commit "${WORKER_COMFYUI_COMMIT}" \
@@ -52,3 +54,5 @@ ENV COMFYUI_MANAGER_DISABLED=1 \
     DO_NOT_TRACK=1 \
     VIDEO_FACTORY_WORKFLOW_ROOT=/opt/video-factory/workflow \
     VIDEO_FACTORY_CONTRACT_ROOT=/opt/video-factory/contract
+
+CMD ["/opt/video-factory/locked-start.sh"]

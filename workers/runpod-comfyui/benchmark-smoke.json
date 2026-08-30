@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "route_id": "fast_wan_i2v_720_v1",
+  "scope": "FIXTURE_ONLY_NO_GPU_COST",
+  "status": "PASSED",
+  "recorded_at": "2026-08-26",
+  "cases": [
+    {
+      "name": "request-16x9",
+      "fixture": "contract/fixtures/request-16x9.json",
+      "status": "PASSED"
+    },
+    {
+      "name": "request-9x16",
+      "fixture": "contract/fixtures/request-9x16.json",
+      "status": "PASSED"
+    },
+    {
+      "name": "response-success",
+      "fixture": "contract/fixtures/response-success.json",
+      "status": "PASSED"
+    },
+    {
+      "name": "response-failure",
+      "fixture": "contract/fixtures/response-failure.json",
+      "status": "PASSED"
+    }
+  ],
+  "real_gpu_benchmark": {
+    "executed": false,
+    "status": "SKIPPED_BY_USER_UNVALIDATED",
+    "evidence": null
+  }
+}

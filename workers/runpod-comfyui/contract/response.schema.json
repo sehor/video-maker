@@ -1,19 +1,55 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://video-factory.invalid/contracts/worker-comfyui-response-v1.schema.json",
-  "title": "Fixed 720p worker-comfyui success response",
+  "title": "Fixed 720p worker-comfyui response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["attempt_id", "status", "output", "metrics", "versions"],
+  "required": ["attempt_id", "status", "output", "metrics", "versions", "error"],
   "properties": {
     "attempt_id": { "type": "string", "format": "uuid" },
-    "status": { "const": "SUCCEEDED" },
+    "status": { "enum": ["SUCCEEDED", "FAILED"] },
+    "output": {
+      "anyOf": [{ "$ref": "#/$defs/output" }, { "type": "null" }]
+    },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "versions": { "$ref": "#/$defs/versions" },
+    "error": {
+      "anyOf": [{ "$ref": "#/$defs/error" }, { "type": "null" }]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "SUCCEEDED" } } },
+      "then": {
+        "properties": {
+          "output": { "$ref": "#/$defs/output" },
+          "error": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "output": { "type": "null" },
+          "error": { "$ref": "#/$defs/error" }
+        }
+      }
+    }
+  ],
+  "$defs": {
     "output": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["claim", "media_type", "size_bytes", "sha256"],
+      "required": ["claim", "object_key", "media_type", "size_bytes", "sha256"],
       "properties": {
-        "claim": { "type": "string", "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$" },
+        "claim": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+        },
+        "object_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$"
+        },
         "media_type": { "const": "video/mp4" },
         "size_bytes": { "type": "integer", "minimum": 1 },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
@@ -22,7 +58,16 @@
     "metrics": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gpu", "queue_ms", "cold_start_ms", "runtime_ms", "billable_ms", "cost_minor", "currency", "cost_source"],
+      "required": [
+        "gpu",
+        "queue_ms",
+        "cold_start_ms",
+        "runtime_ms",
+        "billable_ms",
+        "cost_minor",
+        "currency",
+        "cost_source"
+      ],
       "properties": {
         "gpu": { "type": "string", "minLength": 1, "maxLength": 200 },
         "queue_ms": { "type": "integer", "minimum": 0 },
@@ -31,24 +76,76 @@
         "billable_ms": { "type": "integer", "minimum": 0 },
         "cost_minor": { "type": "integer", "minimum": 0 },
         "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
-        "cost_source": { "enum": ["ACTUAL", "ESTIMATED"] }
+        "cost_source": { "enum": ["ACTUAL", "ESTIMATE"] }
       }
     },
     "versions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["worker_comfyui", "worker_commit", "comfyui_commit", "comfy_cli", "workflow_sha256", "model_sha256"],
+      "required": [
+        "worker_comfyui",
+        "worker_commit",
+        "comfyui_commit",
+        "comfy_cli",
+        "image_digest",
+        "workflow_id",
+        "workflow_sha256",
+        "model_sha256"
+      ],
       "properties": {
         "worker_comfyui": { "const": "5.8.7" },
-        "worker_commit": { "const": "a1981e99b1f5a7201f387653420ad1f275b97d0a" },
-        "comfyui_commit": { "const": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe" },
+        "worker_commit": {
+          "const": "a1981e99b1f5a7201f387653420ad1f275b97d0a"
+        },
+        "comfyui_commit": {
+          "const": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe"
+        },
         "comfy_cli": { "const": "1.18.0" },
-        "workflow_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "image_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "workflow_id": { "const": "fast_wan_i2v_720_v1" },
+        "workflow_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
         "model_sha256": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_INPUT",
+            "POLICY_REJECTED",
+            "WORKER_INTERRUPTED",
+            "MODEL_LOAD_FAILED",
+            "OUT_OF_MEMORY",
+            "WORKFLOW_FAILED",
+            "ASSET_DOWNLOAD_FAILED",
+            "OUTPUT_UPLOAD_FAILED",
+            "OUTPUT_MISSING",
+            "OUTPUT_CORRUPTED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 }
       }
     }
   }

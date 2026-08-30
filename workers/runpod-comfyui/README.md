@@ -89,3 +89,39 @@ available, and the user explicitly chose to skip it and proceed without claiming
 source build verification, model hashes, image digest, GPU/cold-start/runtime data, and cost
 therefore remain unverified and empty in `poc-baseline.json`. Adoption remains `CONDITIONAL`.
 The one-command harness is retained for a future authorized POC.
+
+## Issue #15 adapter and release gate
+
+`apps/api/app/runpod.py` implements the thin asynchronous `/run`, `/status`, and `/cancel`
+adapter without accepting a configurable origin or user URL. The adapter validates every
+third-party response, exact Attempt ID, immutable image digest, Worker/ComfyUI commits,
+workflow hash, model hashes, timings, cost source, output object metadata, and structured error.
+RunPod's documented webhook callback has no cryptographic signature, so the adapter rejects it
+and uses polling; an unsigned callback can never complete an Attempt.
+
+The release gate is intentionally separate from the no-cost POC gate:
+
+```powershell
+uv run --no-project python scripts/release_worker.py preflight --root .
+uv run --no-project python scripts/release_worker.py generate-sbom `
+  --image <registry>/worker@sha256:<digest> `
+  --output <private-release-dir>/worker.spdx.json
+uv run --no-project python scripts/release_worker.py record `
+  --root . `
+  --image <registry>/worker@sha256:<digest> `
+  --rollback-image <registry>/worker@sha256:<previous-digest> `
+  --sbom <private-release-dir>/worker.spdx.json `
+  --benchmark <private-release-dir>/benchmark.json `
+  --output <private-release-dir>/release.json
+```
+
+`generate-sbom` invokes Syft without a shell and validates SPDX JSON. `record` verifies both OCI
+digests against the registry using `docker buildx imagetools inspect`, checks model/custom-node
+license records, fixed workflow hash, fixture plus real-GPU Benchmark evidence, and atomically
+writes the release/rollback record. It cannot accept a mutable tag or `latest`.
+
+The committed `benchmark-smoke.json` passes only the fixed no-cost fixtures. The committed
+`release/release.template.json` remains `BLOCKED_UNVALIDATED`; it is evidence of missing gates,
+not a releasable image. `THIRD_PARTY_NOTICES.md` records the currently known runtime and
+build-only notices. Until #14's real POC supplies verified model hashes, image digest and GPU
+evidence, preflight must remain blocked and the route must remain disabled.

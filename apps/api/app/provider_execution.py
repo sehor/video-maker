@@ -16,6 +16,7 @@ from app.provider import (
     PollResult,
     ProviderFailure,
     ProviderStatus,
+    ProviderSubmissionError,
     SubmitDisposition,
     VideoProvider,
     WebhookVerificationRequest,
@@ -108,6 +109,11 @@ class GenerationExecutionService(
                     return ProviderExecutionStep(is_complete=True, poll_count=0)
                 try:
                     submitted = await provider.submit(self._submit_request(context))
+                except ProviderSubmissionError as exc:
+                    action = self._fail_attempt(context, exc.failure)
+                    if action:
+                        continue
+                    return ProviderExecutionStep(is_complete=True, poll_count=0)
                 except Exception:
                     submitted = None
                 if submitted is not None and submitted.disposition == SubmitDisposition.ACCEPTED:

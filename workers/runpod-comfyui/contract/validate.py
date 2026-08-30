@@ -8,7 +8,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-
 WORKER_COMFYUI_VERSION = "5.8.7"
 WORKER_COMFYUI_COMMIT = "a1981e99b1f5a7201f387653420ad1f275b97d0a"
 COMFYUI_COMMIT = "a8c44f9b2a0678ac4082e3529a3f43db7472acfe"
@@ -28,7 +27,9 @@ REQUEST_FIELDS = frozenset(
         "callback_claim",
     }
 )
-RESPONSE_FIELDS = frozenset({"attempt_id", "status", "output", "metrics", "versions"})
+RESPONSE_FIELDS = frozenset(
+    {"attempt_id", "status", "output", "metrics", "versions", "error"}
+)
 CLAIM_PATTERN = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 
@@ -96,19 +97,61 @@ def require_nonnegative_int(value: object, label: str) -> None:
 def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
     require_exact_fields(value, RESPONSE_FIELDS, "response")
     require_uuid(value["attempt_id"], "attempt_id")
-    if value["status"] != "SUCCEEDED":
-        raise ContractError("success fixture status must be SUCCEEDED")
+    if value["status"] not in {"SUCCEEDED", "FAILED"}:
+        raise ContractError("response status is invalid")
 
-    output = value["output"]
-    require_exact_fields(
-        output, frozenset({"claim", "media_type", "size_bytes", "sha256"}), "output"
-    )
-    require_claim(output["claim"], "output.claim")
-    if output["media_type"] != "video/mp4":
-        raise ContractError("output must be video/mp4")
-    require_nonnegative_int(output["size_bytes"], "output.size_bytes")
-    if output["size_bytes"] == 0 or not SHA256_PATTERN.fullmatch(output["sha256"]):
-        raise ContractError("output metadata is incomplete")
+    if value["status"] == "SUCCEEDED":
+        if value["error"] is not None or not isinstance(value["output"], dict):
+            raise ContractError("successful response must contain only output")
+        output = value["output"]
+        require_exact_fields(
+            output,
+            frozenset(
+                {"claim", "object_key", "media_type", "size_bytes", "sha256"}
+            ),
+            "output",
+        )
+        require_claim(output["claim"], "output.claim")
+        object_key = output["object_key"]
+        if (
+            not isinstance(object_key, str)
+            or not 1 <= len(object_key) <= 255
+            or object_key.startswith("/")
+            or any(part in {"", ".", ".."} for part in object_key.split("/"))
+        ):
+            raise ContractError("output.object_key is invalid")
+        if output["media_type"] != "video/mp4":
+            raise ContractError("output must be video/mp4")
+        require_nonnegative_int(output["size_bytes"], "output.size_bytes")
+        if output["size_bytes"] == 0 or not SHA256_PATTERN.fullmatch(
+            output["sha256"]
+        ):
+            raise ContractError("output metadata is incomplete")
+    else:
+        if value["output"] is not None or not isinstance(value["error"], dict):
+            raise ContractError("failed response must contain only error")
+        error = value["error"]
+        require_exact_fields(error, frozenset({"code", "message"}), "error")
+        allowed_error_codes = {
+            "INVALID_INPUT",
+            "POLICY_REJECTED",
+            "WORKER_INTERRUPTED",
+            "MODEL_LOAD_FAILED",
+            "OUT_OF_MEMORY",
+            "WORKFLOW_FAILED",
+            "ASSET_DOWNLOAD_FAILED",
+            "OUTPUT_UPLOAD_FAILED",
+            "OUTPUT_MISSING",
+            "OUTPUT_CORRUPTED",
+            "INTERNAL_ERROR",
+        }
+        if error["code"] not in allowed_error_codes:
+            raise ContractError("worker error code is outside the closed contract")
+        if (
+            not isinstance(error["message"], str)
+            or not 1 <= len(error["message"]) <= 1000
+        ):
+            raise ContractError("worker error message is invalid")
 
     metrics = value["metrics"]
     metric_fields = frozenset(
@@ -136,7 +179,7 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
         require_nonnegative_int(metrics[field], f"metrics.{field}")
     if not re.fullmatch(r"[A-Z]{3}", metrics["currency"]):
         raise ContractError("metrics.currency must be an ISO-style currency code")
-    if metrics["cost_source"] not in {"ACTUAL", "ESTIMATED"}:
+    if metrics["cost_source"] not in {"ACTUAL", "ESTIMATE"}:
         raise ContractError("metrics.cost_source is invalid")
 
     versions = value["versions"]
@@ -146,6 +189,8 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
             "worker_commit",
             "comfyui_commit",
             "comfy_cli",
+            "image_digest",
+            "workflow_id",
             "workflow_sha256",
             "model_sha256",
         }
@@ -156,6 +201,7 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
         "worker_commit": WORKER_COMFYUI_COMMIT,
         "comfyui_commit": COMFYUI_COMMIT,
         "comfy_cli": COMFY_CLI_VERSION,
+        "workflow_id": WORKFLOW_ID,
         "workflow_sha256": workflow_sha256,
     }
     for field, expected in expected_versions.items():
@@ -168,6 +214,8 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
         )
     if any(not SHA256_PATTERN.fullmatch(item) for item in model_hashes.values()):
         raise ContractError("model_sha256 contains an invalid digest")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", versions["image_digest"]):
+        raise ContractError("versions.image_digest is invalid")
 
 
 def repository_paths(root: Path) -> tuple[Path, Path, Path | None]:
@@ -212,7 +260,8 @@ def validate_repository(
     workflow_path = workflow_root / "workflow_api.json"
     manifest = load_json(workflow_root / "manifest.json")
     workflow = load_json(workflow_path)
-    workflow_sha256 = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+    workflow_bytes = workflow_path.read_bytes().replace(b"\r\n", b"\n")
+    workflow_sha256 = hashlib.sha256(workflow_bytes).hexdigest()
     if (
         manifest["workflow_id"] != WORKFLOW_ID
         or manifest["workflow_sha256"] != workflow_sha256
@@ -251,9 +300,8 @@ def validate_repository(
 
     for fixture in sorted((contract_root / "fixtures").glob("request-*.json")):
         validate_request(load_json(fixture))
-    validate_response(
-        load_json(contract_root / "fixtures" / "response-success.json"), workflow_sha256
-    )
+    for name in ("response-success.json", "response-failure.json"):
+        validate_response(load_json(contract_root / "fixtures" / name), workflow_sha256)
 
     if baseline_path is not None:
         baseline = load_json(baseline_path)

@@ -69,6 +69,14 @@ Control Plane 只传白名单字段：`job_id`、`attempt_id`、`workflow_id`、
 - 回调可重复、乱序和迟到；
 - cancel 只作 best effort，确认无有效输出后才返还。
 
+首条 Adapter 固定调用 `https://api.runpod.ai/v2/{endpoint_id}`，不接受可配置 origin 或用户 URL。
+RunPod 文档化 webhook 没有可供 Control Plane 验证的密码学签名，因此在签名能力得到独立验证前
+保持关闭，仅使用 polling；禁止为了形式上满足 webhook 而信任 unsigned callback。
+
+Worker 发布由 `scripts/release_worker.py` fail-closed 门禁：OCI 发布镜像与回滚镜像均须用 registry
+实际可验证的 digest，附 SPDX SBOM、许可证通知、固定模型／节点登记、workflow hash、fixture smoke
+与真实 GPU Benchmark 证据。未执行真实 POC 时只允许保留 `BLOCKED_UNVALIDATED` 模板，路线不得启用。
+
 统一错误至少覆盖鉴权、容量、5xx、队列超时、启动失败、模型加载、OOM、workflow 失败、素材下载、上传失败、缺失／损坏媒体和未知错误。是否重试由 Control Plane 决定。
 
 ## 6. 输出与媒体校验

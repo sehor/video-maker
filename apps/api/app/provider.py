@@ -23,6 +23,7 @@ class FailureCode(StrEnum):
     LICENSE_BLOCKED = "LICENSE_BLOCKED"
     PROVIDER_TERMS_BLOCKED = "PROVIDER_TERMS_BLOCKED"
     NO_ROUTE = "NO_ROUTE"
+    PROVIDER_AUTHENTICATION = "PROVIDER_AUTHENTICATION"
     NETWORK_TIMEOUT = "NETWORK_TIMEOUT"
     PROVIDER_5XX = "PROVIDER_5XX"
     PROVIDER_CAPACITY = "PROVIDER_CAPACITY"
@@ -149,6 +150,8 @@ class ProviderOutput:
     object_key: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
+    metrics: "ProviderMetrics | None" = None
+    versions: "ProviderVersions | None" = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +161,9 @@ class ProviderMetrics:
     cold_start_ms: int
     runtime_ms: int
     billable_ms: int
+    cost_minor: int | None = None
+    currency: str | None = None
+    cost_source: CostSource | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -169,6 +175,16 @@ class ProviderMetrics:
         timings = (self.queue_ms, self.cold_start_ms, self.runtime_ms, self.billable_ms)
         if any(type(value) is not int for value in timings) or min(timings) < 0:
             raise ValueError("provider timings must be non-negative integer milliseconds")
+        cost_fields = (self.cost_minor, self.currency, self.cost_source)
+        if any(value is not None for value in cost_fields):
+            if (
+                type(self.cost_minor) is not int
+                or self.cost_minor < 0
+                or not isinstance(self.currency, str)
+                or re.fullmatch(r"[A-Z]{3}", self.currency) is None
+                or not isinstance(self.cost_source, CostSource)
+            ):
+                raise ValueError("provider cost metadata must be complete and valid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +197,14 @@ class ProviderVersions:
     workflow_version: str
     workflow_hash: str
     model_hashes: Mapping[str, str]
+
+    @property
+    def workflow_sha256(self) -> str:
+        return self.workflow_hash
+
+    @property
+    def model_sha256(self) -> Mapping[str, str]:
+        return self.model_hashes
 
     def __post_init__(self) -> None:
         if not isinstance(self.image_digest, str) or not re.fullmatch(
@@ -429,3 +453,9 @@ class MockVideoProvider:
 
 class WebhookVerificationError(ValueError):
     pass
+
+
+class ProviderSubmissionError(RuntimeError):
+    def __init__(self, failure: ProviderFailure) -> None:
+        super().__init__(failure.message)
+        self.failure = failure

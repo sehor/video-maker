@@ -3,9 +3,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import re
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "workers" / "runpod-comfyui" / "contract" / "validate.py"
@@ -23,6 +23,19 @@ def fixture(name: str) -> dict[str, object]:
 class WorkerComfyUIPocTests(unittest.TestCase):
     def test_repository_contract_is_self_consistent(self) -> None:
         worker_contract.validate_repository(ROOT)
+
+    def test_response_schema_rejects_unsafe_object_keys(self) -> None:
+        schema_path = (
+            ROOT / "workers" / "runpod-comfyui" / "contract" / "response.schema.json"
+        )
+        response_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        pattern = response_schema["$defs"]["output"]["properties"]["object_key"][
+            "pattern"
+        ]
+        self.assertIsNotNone(re.fullmatch(pattern, "outputs/attempt.mp4"))
+        for invalid in ("/absolute.mp4", "outputs//video.mp4", "../video.mp4"):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(re.fullmatch(pattern, invalid))
 
     def test_user_skipped_real_poc_is_explicitly_unvalidated(self) -> None:
         path = ROOT / "workers" / "runpod-comfyui" / "poc-baseline.json"
@@ -97,6 +110,13 @@ class WorkerComfyUIPocTests(unittest.TestCase):
         self.assertNotIn("pip install", production)
         self.assertIn("rm -rf", production)
         self.assertIn("ComfyUI-Manager", production)
+        self.assertIn('CMD ["/opt/video-factory/locked-start.sh"]', production)
+        locked_start = (
+            ROOT / "workers" / "runpod-comfyui" / "locked-start.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("unset PUBLIC_KEY", locked_start)
+        self.assertIn("export SERVE_API_LOCALLY=false", locked_start)
+        self.assertNotIn("--listen", locked_start)
 
 
 if __name__ == "__main__":

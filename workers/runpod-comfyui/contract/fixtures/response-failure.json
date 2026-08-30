@@ -1,20 +1,14 @@
 {
   "attempt_id": "9d52c1db-f071-4876-86f7-3ccf597ac4db",
-  "status": "SUCCEEDED",
-  "output": {
-    "claim": "ZXhhbXBsZS1vdXRwdXQtY2xhaW0.c2lnbmF0dXJl",
-    "object_key": "outputs/9d52c1db-f071-4876-86f7-3ccf597ac4db.mp4",
-    "media_type": "video/mp4",
-    "size_bytes": 123456,
-    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
-  },
+  "status": "FAILED",
+  "output": null,
   "metrics": {
     "gpu": "fixture-gpu",
-    "queue_ms": 0,
-    "cold_start_ms": 0,
-    "runtime_ms": 0,
-    "billable_ms": 0,
-    "cost_minor": 0,
+    "queue_ms": 10,
+    "cold_start_ms": 20,
+    "runtime_ms": 30,
+    "billable_ms": 50,
+    "cost_minor": 1,
     "currency": "USD",
     "cost_source": "ESTIMATE"
   },
@@ -30,5 +24,8 @@
       "fixture-model": "2222222222222222222222222222222222222222222222222222222222222222"
     }
   },
-  "error": null
+  "error": {
+    "code": "OUT_OF_MEMORY",
+    "message": "Worker exhausted GPU memory"
+  }
 }
