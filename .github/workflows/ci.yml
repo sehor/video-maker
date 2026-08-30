@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 22.19.0
           cache: pnpm
+      - name: Repository command baseline
+        run: python3 scripts/check_repository_baseline.py
       - name: Build services
         run: docker compose build
       - name: Install E2E dependencies
@@ -45,10 +47,9 @@ jobs:
           docker compose run --rm --no-deps -w /app \
             -e DATABASE_URL="$TEST_DATABASE_URL" \
             api alembic upgrade head
-          test "$(docker compose exec -T postgres \
-            psql -U video_factory -d video_factory_ci_test -Atc \
-            'SELECT version_num FROM alembic_version')" = \
-            "0007_batch_atomic_reservation"
+          docker compose run --rm --no-deps -w /app \
+            -e DATABASE_URL="$TEST_DATABASE_URL" \
+            api python scripts/check_database_head.py
       - name: PostgreSQL concurrency regressions
         env:
           TEST_DATABASE_URL: postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory_ci_test

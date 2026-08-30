@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.config import get_settings
 
 
@@ -16,6 +17,12 @@ def alembic_config(database_url: str) -> Config:
     config.set_main_option("script_location", str(root / "alembic"))
     config.set_main_option("sqlalchemy.url", database_url)
     return config
+
+
+def only_alembic_head(config: Config) -> str:
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1, f"expected one Alembic head, found {heads}"
+    return heads[0]
 
 
 def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
@@ -59,7 +66,7 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
     } <= triggers
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-            "0008_attempt_provenance"
+            only_alembic_head(config)
         )
 
     command.downgrade(config, "0001_stage_one")
