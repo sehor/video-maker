@@ -183,13 +183,24 @@ class GenerationExecutionService(
             )
         return ProviderExecutionStep(is_complete=True, poll_count=0)
 
-    async def request_cancel(self, job_id: uuid.UUID) -> None:
-        context = self._load_active_attempt(job_id)
+    async def request_cancel(
+        self,
+        job_id: uuid.UUID,
+        attempt_id: uuid.UUID | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        context = (
+            self._load_active_attempt(job_id)
+            if attempt_id is None
+            else self._load_cancellable_attempt(job_id, attempt_id)
+        )
         if context is None:
             return
         provider = self._provider_for(context.provider_code)
         try:
-            result = await provider.cancel(context.provider_attempt())
+            result = await provider.cancel(
+                context.provider_cancel_attempt(idempotency_key)
+            )
         except Exception as exc:
             logger.warning(
                 "provider.cancel_failed",
@@ -198,7 +209,7 @@ class GenerationExecutionService(
                 provider=context.provider_code,
                 error_type=type(exc).__name__,
             )
-            return
+            raise
         logger.info(
             "provider.cancel_result",
             job_id=str(job_id),

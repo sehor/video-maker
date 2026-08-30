@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import dispatch_generation_outbox, router
+from app.api import dispatch_generation_outbox, dispatch_provider_cancel_outbox, router
 from app.config import get_settings
 from app.errors import ApiError
 from app.outbox import DispatchResult
@@ -47,20 +47,43 @@ async def outbox_dispatcher_loop(stop: asyncio.Event) -> None:
     logger.info("outbox.dispatcher_stopped")
 
 
+async def provider_cancel_dispatcher_loop(stop: asyncio.Event) -> None:
+    logger.info("provider_cancel_outbox.dispatcher_started")
+    while not stop.is_set():
+        try:
+            result = await dispatch_provider_cancel_outbox()
+        except Exception as exc:
+            logger.exception(
+                "provider_cancel_outbox.dispatcher_failed",
+                error_type=type(exc).__name__,
+            )
+            result = None
+        if result == DispatchResult.PUBLISHED:
+            continue
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.outbox_poll_interval_seconds)
+        except TimeoutError:
+            pass
+    logger.info("provider_cancel_outbox.dispatcher_stopped")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     stop = asyncio.Event()
-    task = (
-        asyncio.create_task(outbox_dispatcher_loop(stop))
+    tasks = (
+        [
+            asyncio.create_task(outbox_dispatcher_loop(stop)),
+            asyncio.create_task(provider_cancel_dispatcher_loop(stop)),
+        ]
         if settings.outbox_dispatcher_enabled
-        else None
+        else []
     )
     try:
         yield
     finally:
-        if task is not None:
+        if tasks:
             stop.set()
-            await task
+            await asyncio.gather(*tasks)
 
 app = FastAPI(
     title=settings.app_name,

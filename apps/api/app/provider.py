@@ -132,6 +132,10 @@ class ProviderAttempt:
     mode: str = "success"
 
 
+def provider_cancel_key(attempt_id: uuid.UUID) -> str:
+    return f"attempt:{attempt_id}:cancel:v1"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderFailure:
     code: FailureCode

@@ -250,26 +250,30 @@ class ProviderCompletionService:
     ) -> bool:
         retryable = is_retryable_failure(failure.code)
         with self._session_factory() as db:
-            job = db.get(GenerationJob, context.job_id)
+            job = db.scalar(
+                select(GenerationJob)
+                .where(GenerationJob.id == context.job_id)
+                .with_for_update()
+            )
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return False
             if result is not None:
                 self._apply_attempt_snapshot(attempt, result)
             if job.status == JobStatus.CANCEL_REQUESTED:
-                if not transition_attempt(
+                if not transition_job(
+                    db,
+                    job,
+                    JobStatus.CANCELLED,
+                    "provider.cancelled",
+                    f"job:{job.id}:terminal-cancelled:v1",
+                ) or not transition_attempt(
                     db,
                     attempt,
                     AttemptStatus.CANCELLED,
                     "attempt.cancelled",
                     f"attempt:{attempt.id}:terminal-cancelled:v1",
                     {"failure_code": FailureCode.USER_CANCELLED.value},
-                ) or not transition_job(
-                    db,
-                    job,
-                    JobStatus.CANCELLED,
-                    "provider.cancelled",
-                    f"job:{job.id}:terminal-cancelled:v1",
                 ):
                     db.rollback()
                     return False
@@ -584,7 +588,11 @@ class ProviderCompletionService:
 
     def _finish_cancelled(self, context: AttemptContext, result: PollResult) -> None:
         with self._session_factory() as db:
-            job = db.get(GenerationJob, context.job_id)
+            job = db.scalar(
+                select(GenerationJob)
+                .where(GenerationJob.id == context.job_id)
+                .with_for_update()
+            )
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return
@@ -596,19 +604,19 @@ class ProviderCompletionService:
                 JobStatus.CANCEL_REQUESTED,
             }:
                 return
-            if not transition_attempt(
+            if not transition_job(
+                db,
+                job,
+                JobStatus.CANCELLED,
+                "provider.cancelled",
+                f"job:{job.id}:terminal-cancelled:v1",
+            ) or not transition_attempt(
                 db,
                 attempt,
                 AttemptStatus.CANCELLED,
                 "attempt.cancelled",
                 f"attempt:{attempt.id}:terminal-cancelled:v1",
                 {"failure_code": FailureCode.USER_CANCELLED.value},
-            ) or not transition_job(
-                db,
-                job,
-                JobStatus.CANCELLED,
-                "provider.cancelled",
-                f"job:{job.id}:terminal-cancelled:v1",
             ):
                 db.rollback()
                 return

@@ -1950,6 +1950,21 @@ Benchmark。最终结论只能表述为“模拟控制面验收通过”，不�
 - 任意崩溃窗口后 Cancel 事件仍可被重新领取。
 - Job、Attempt、Outbox 与账本结果一致，Settle/Release 各最多一次且互斥。
 
+### 实现状态（2026-08-30）
+
+- [x] 迁移 `0009_reliable_cancellation` 为 `outbox_events` 增加可空 `attempt_id`，并用
+  `(attempt_id, job_id)` 外键绑定 Generation Attempt；启动 Outbox 兼容保留。
+- [x] 取消 API 在同一事务提交 `CANCEL_REQUESTED`、唯一
+  `provider.cancel.requested` Outbox 和 API 幂等结果；不再同步调用 Provider。
+- [x] 独立 Cancel dispatcher 支持 `SKIP LOCKED` 领取、`lock_token` 条件更新、调用期间
+  心跳续租、租约过期重领、定时重试、尝试次数和最后错误记录。
+- [x] Provider Cancel 稳定键固定为 `attempt:{attempt_id}:cancel:v1`；接受后响应丢失、
+  调用前后崩溃和重复派发均使用同一键恢复。
+- [x] Cancel 结果复用统一 Provider 完成路径；成功／取消竞态测试证明最终只 Settle 或
+  Release 一次，迟到结果不能改写既有终态。
+- [x] 全部场景只使用 Fake Clock、Fake Provider、模拟 Storage 和故障注入；未调用真实
+  Provider、RunPod 或 GPU，未进入 SIM-03。
+
 ## 6.4 SIM-03：Project 软删除与 Storage Cleanup Outbox
 
 ### 目标

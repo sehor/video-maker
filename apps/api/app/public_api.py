@@ -48,6 +48,11 @@ from app.models import (
     ShotReference,
 )
 from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
+from app.provider_cancel_outbox import (
+    ProviderCancelDispatcher,
+    ProviderCancelRequest,
+    enqueue_provider_cancel,
+)
 from app.provider_execution import GenerationExecutionService
 from app.provider_registry import ProviderNotConfiguredError
 from app.routing import (
@@ -163,6 +168,16 @@ def route_for_shot(
 
 async def dispatch_generation_outbox() -> DispatchResult:
     return await OutboxDispatcher(SessionLocal, workflow_starter).dispatch_once()
+
+
+async def execute_provider_cancel(request: ProviderCancelRequest) -> None:
+    await provider_executor(request.provider_code).request_cancel(
+        request.job_id, request.attempt_id, request.idempotency_key
+    )
+
+
+async def dispatch_provider_cancel_outbox() -> DispatchResult:
+    return await ProviderCancelDispatcher(SessionLocal, execute_provider_cancel).dispatch_once()
 
 
 def encode_cursor(created_at: str, item_id: uuid.UUID) -> str:
@@ -793,6 +808,12 @@ async def cancel_generation(
     if replay_id is not None:
         return load_job(db, replay_id, user.id)
     job = load_job(db, job_id, user.id)
+    db.execute(
+        select(GenerationJob.id)
+        .where(GenerationJob.id == job.id)
+        .with_for_update()
+    ).scalar_one()
+    db.refresh(job, ["status"])
     if job.status in {
         JobStatus.SUCCEEDED,
         JobStatus.FAILED_FINAL,
@@ -810,14 +831,21 @@ async def cancel_generation(
         JobStatus.CANCEL_REQUESTED,
     }
     if submitted:
-        if job.status != JobStatus.CANCEL_REQUESTED and not transition_job(
-            db,
-            job,
-            JobStatus.CANCEL_REQUESTED,
-            "job.cancel_requested",
-            f"job:{job.id}:cancel-requested:v1",
-        ):
-            raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+        if job.status != JobStatus.CANCEL_REQUESTED:
+            changed = transition_job(
+                db,
+                job,
+                JobStatus.CANCEL_REQUESTED,
+                "job.cancel_requested",
+                f"job:{job.id}:cancel-requested:v1",
+            )
+            if not changed:
+                db.expire(job, ["status"])
+                if job.status != JobStatus.CANCEL_REQUESTED:
+                    raise ApiError(409, "JOB_STATE_CONFLICT", "任务状态已变化")
+        if not job.attempts:
+            raise ApiError(409, "ATTEMPT_STATE_CONFLICT", "任务没有可取消的尝试")
+        enqueue_provider_cancel(db, job, job.attempts[-1])
     else:
         if not transition_job(
             db, job, JobStatus.CANCELLED, "job.cancelled", f"job:{job.id}:cancelled:v1"
@@ -849,13 +877,6 @@ async def cancel_generation(
         response_status=200,
     )
     db.commit()
-    if submitted:
-        # Resolve through the compatibility facade so existing internal overrides
-        # keep working after Public/Admin route modules are split.
-        from app.api import provider_executor as resolve_provider_executor
-
-        await resolve_provider_executor(job.attempts[-1].provider_code).request_cancel(job.id)
-        db.expire_all()
     return load_job(db, job.id, user.id)
 
 

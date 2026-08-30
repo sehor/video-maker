@@ -67,7 +67,8 @@ Control Plane 只传白名单字段：`job_id`、`attempt_id`、`workflow_id`、
 - submit 超时不能直接判断未提交，必须查询或对账；
 - webhook 先验签，polling 作为补偿，两者调用同一幂等完成函数；
 - 回调可重复、乱序和迟到；
-- cancel 只作 best effort，确认无有效输出后才返还。
+- cancel 只作 best effort；取消请求与唯一 Cancel Outbox 同事务提交，后台使用
+  `attempt:{attempt_id}:cancel:v1` 重放；确认无有效输出后才返还。
 
 首条 Adapter 固定调用 `https://api.runpod.ai/v2/{endpoint_id}`，不接受可配置 origin 或用户 URL。
 RunPod 文档化 webhook 没有可供 Control Plane 验证的密码学签名，因此在签名能力得到独立验证前
@@ -172,3 +173,17 @@ Issue 8 只完成离线、确定性的 Control Plane 模拟验收，不代表真
 `worker-comfyui` 和真实 RunPod 路线继续保持 `CONDITIONAL`／默认禁用；只有完成独立、
 获批且有凭据的真实 POC 后，才可更新本节结论或启用路线。模拟通过不得用于对外宣称
 真实 POC、Benchmark 或生产就绪。
+
+## 13. SIM-02 可靠取消模拟验收状态
+
+Provider 提交后的取消已改为独立 Cancel Outbox：API 只在 PostgreSQL 同一事务中提交
+`CANCEL_REQUESTED`、API 幂等结果和绑定 Job／Attempt 的唯一取消事件；后台 dispatcher
+负责领取、租约心跳、临时失败退避、租约过期重领和完成标记。Provider Cancel 始终使用
+`attempt:{attempt_id}:cancel:v1`，因此调用已接受但响应丢失、进程在调用前后崩溃或重复
+派发时可以安全重放。
+
+离线测试使用 Fake Clock、Fake Provider 和故障注入，覆盖提交后派发前崩溃、Claim 后
+崩溃、接受后响应丢失、连续临时失败、重复派发，以及取消与成功输出双向竞态。取消确认、
+成功、最终失败和迟到事件继续进入统一完成路径；每个 Job 只允许 Settle 或 Release 之一，
+且各最多一次。本节仍只表示模拟控制面验收，不调用真实 Provider、RunPod 或 GPU，也不
+改变真实路线的 `CONDITIONAL`／默认禁用状态。

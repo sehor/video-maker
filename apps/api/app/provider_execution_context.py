@@ -13,7 +13,7 @@ from app.models import (
     Shot,
     ShotReference,
 )
-from app.provider import ProviderAttempt
+from app.provider import ProviderAttempt, provider_cancel_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,13 +37,21 @@ class AttemptContext:
     def idempotency_key(self) -> str:
         return f"attempt:{self.attempt_id}:submit:v1"
 
-    def provider_attempt(self) -> ProviderAttempt:
+    def provider_attempt(self, *, idempotency_key: str | None = None) -> ProviderAttempt:
         return ProviderAttempt(
             attempt_id=self.attempt_id,
-            idempotency_key=self.idempotency_key,
+            idempotency_key=idempotency_key or self.idempotency_key,
             provider_job_id=self.provider_job_id,
             mode=self.mode,
         )
+
+    def provider_cancel_attempt(
+        self, idempotency_key: str | None = None
+    ) -> ProviderAttempt:
+        expected = provider_cancel_key(self.attempt_id)
+        if idempotency_key is not None and idempotency_key != expected:
+            raise ValueError("provider cancel idempotency key is not bound to attempt_id")
+        return self.provider_attempt(idempotency_key=expected)
 
 
 class AttemptContextService:
@@ -106,6 +114,18 @@ class AttemptContextService:
                 .limit(1)
             )
             if attempt is None:
+                return None
+            return self._context_for(db, job, attempt)
+
+    def _load_cancellable_attempt(
+        self, job_id: uuid.UUID, attempt_id: uuid.UUID
+    ) -> AttemptContext | None:
+        with self._session_factory() as db:
+            job = db.get(GenerationJob, job_id)
+            if job is None or job.status != JobStatus.CANCEL_REQUESTED:
+                return None
+            attempt = db.get(GenerationAttempt, attempt_id)
+            if attempt is None or attempt.job_id != job_id:
                 return None
             return self._context_for(db, job, attempt)
 

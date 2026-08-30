@@ -167,6 +167,7 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     }
     assert {
         "job_id",
+        "attempt_id",
         "idempotency_key",
         "status",
         "attempt_count",
@@ -179,6 +180,16 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         "uq_outbox_events_idempotency_key",
     } <= {
         constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")
+    }
+    assert "fk_outbox_events_attempt_job" in {
+        constraint["name"] for constraint in inspector.get_foreign_keys("outbox_events")
+    }
+    assert "ix_outbox_events_attempt_id" in {
+        index["name"] for index in inspector.get_indexes("outbox_events")
+    }
+    assert "ck_outbox_events_cancel_attempt" in {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("outbox_events")
     }
     assert {
         "provider_code",

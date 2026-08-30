@@ -607,9 +607,19 @@ class GenerationJob(Base, TimestampMixin):
 class OutboxEvent(Base, TimestampMixin):
     __tablename__ = "outbox_events"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "job_id"],
+            ["generation_attempts.id", "generation_attempts.job_id"],
+            name="fk_outbox_events_attempt_job",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint("job_id", "event_type", name="uq_outbox_events_job_event"),
         UniqueConstraint("idempotency_key", name="uq_outbox_events_idempotency_key"),
         CheckConstraint("attempt_count >= 0", name="ck_outbox_events_attempt_count"),
+        CheckConstraint(
+            "event_type != 'provider.cancel.requested' OR attempt_id IS NOT NULL",
+            name="ck_outbox_events_cancel_attempt",
+        ),
         CheckConstraint(
             "status != 'PROCESSING' OR (locked_at IS NOT NULL AND lock_token IS NOT NULL)",
             name="ck_outbox_events_processing_lease",
@@ -625,6 +635,7 @@ class OutboxEvent(Base, TimestampMixin):
     job_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("generation_jobs.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -643,7 +654,9 @@ class OutboxEvent(Base, TimestampMixin):
     workflow_id: Mapped[str | None] = mapped_column(String(255))
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    job: Mapped[GenerationJob] = relationship(back_populates="outbox_events")
+    job: Mapped[GenerationJob] = relationship(
+        back_populates="outbox_events", foreign_keys=[job_id]
+    )
 
 
 class GenerationAttempt(Base, TimestampMixin):
