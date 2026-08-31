@@ -79,6 +79,12 @@ E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账�
 不会清理已有用户数据。没有浏览器时按上文安装一次；普通 E2E 不启动 Compose。
 Local 模式不需要运行 `worker`。可选的 Hatchet Cloud 模式见下节。
 
+总验收应使用独立 E2E 库：在已忽略的 `.env.local` 中将 `POSTGRES_DB`、
+`DATABASE_URL`、`BETTER_AUTH_DATABASE_URL` 对齐到专用 `_test` 库，并指定独立
+`STORAGE_ROOT`。迁移、API、Web 和 E2E 均加 `-EnvFile .env.local`，避免给开发库
+写入测试数据；不要让 API 单元测试同时重建这个 E2E 库。
+完整验收与按需跳过项见 [WINDEV-06 验收报告](docs/reports/WINDEV-06_Windows原生总验收.md)。
+
 Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
 以下容器操作仅供独立集成／发布验证，不属于 Windows 原生开发的安装、启动或验收步骤。
 完成原生改造不要求启动 WSL/Docker，也不以远程容器 CI 通过为前提。

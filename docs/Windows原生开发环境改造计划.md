@@ -1,7 +1,7 @@
 # Windows 原生开发环境改造计划
 
-> 状态：`IN_PROGRESS`，按独立工作项实施；尚未完成整体原生验收。
-> 日期：2026-08-30  
+> 状态：`ACCEPTED`，Windows 原生必选门禁通过；按需云集成明确跳过。
+> 日期：2026-08-31（计划始于 2026-08-30）
 > 背景：SIM-05 已完成；本计划只改造开发环境边界，不改变已经验收的业务语义。
 
 2026-08-31：WINDEV-01 已实现 Backend 配置、工厂、Hatchet 延迟注册和生产保护；
@@ -13,13 +13,16 @@ API/Web 启动与就绪验证也已完成。WINDEV-04 已实现 Cloud TLS 配置
 信号适配与显式远程测试入口；真实 Cloud 验收待开发租户 Token。WINDEV-05 已实现
 Compose 显式隔离、构建产物启动和 CI 门禁分组，并通过本机相关门禁。
 Docker 构建、Compose 运行和远程容器 CI 未执行，作为独立集成验证记录，
-不列为 Windows 原生改造的剩余必做项。当前原生必做项为 WINDEV-06 总验收与文档切换；
+不列为 Windows 原生改造的剩余必做项。WINDEV-06 总验收与文档切换已完成：
+API 266 项通过、3 项按环境或显式启用条件跳过；三轮 PostgreSQL 并发检查、
+Web 门禁与原生 E2E 通过，WSL 在验收前后均为 `Stopped`。
 Hatchet Cloud 按需验证，无凭据时按矩阵明确跳过，不将跳过记为云验收通过。
 具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
 和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)，以及
 [WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)和
 [WINDEV-04 验证记录](reports/WINDEV-04_HatchetCloud集成验证.md)，以及
-[WINDEV-05 验证记录](reports/WINDEV-05_Compose隔离与CI验证.md)。
+[WINDEV-05 验证记录](reports/WINDEV-05_Compose隔离与CI验证.md)。最终结果见
+[WINDEV-06 原生总验收](reports/WINDEV-06_Windows原生总验收.md)。
 
 ## 1. 目标
 
@@ -315,6 +318,9 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 WINDEV-06 的前置条件，也不把静态配置检查记为远程运行通过。
 
 ### WINDEV-06：WSL 关闭状态总验收与文档切换
+
+状态：`ACCEPTED`，2026-08-31 原生必选矩阵通过，按需 Cloud 因无凭据明确跳过；
+开发总纲、索引和旧维护手册已切换。测试数据仅写入隔离测试库。
 
 依赖：WINDEV-02、03、05 的原生实现与本机验证；WINDEV-04 为按需集成模式，
 无云凭据时按第 7 节跳过。Docker/Compose 运行及远程 CI 不作为前置条件。
