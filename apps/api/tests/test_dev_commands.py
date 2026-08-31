@@ -133,3 +133,51 @@ def test_failed_preflight_never_launches_migrations(tmp_path, monkeypatch):
     monkeypatch.setattr(dev, "run", lambda *args, **kwargs: calls.append(args))
     assert dev.main(["--env-file", str(target), "migrate"]) == 1
     assert not calls
+
+
+def test_hatchet_file_paths_are_relative_to_repository_not_process_directory(tmp_path):
+    target = tmp_path / "cloud.env"
+    target.write_text(
+        'HATCHET_CLIENT_TOKEN_FILE="private keys/token.txt"\n'
+        'HATCHET_CLIENT_TLS_ROOT_CA_FILE="private keys/root.pem"\n'
+    )
+    loaded = dev.load_environment(target, {})
+    assert Path(loaded["HATCHET_CLIENT_TOKEN_FILE"]) == ROOT / "private keys/token.txt"
+    assert Path(loaded["HATCHET_CLIENT_TLS_ROOT_CA_FILE"]) == ROOT / "private keys/root.pem"
+
+
+def test_cloud_without_credentials_skips_before_database_or_process(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "cloud.env"
+    target.write_text("WORKFLOW_BACKEND=local\nHATCHET_CLIENT_TOKEN=   \n")
+    monkeypatch.setattr(dev.os, "environ", {})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("No credentials must skip before any database or process access")
+
+    monkeypatch.setattr(dev, "validate_database_pair", unexpected)
+    monkeypatch.setattr(dev, "run", unexpected)
+    assert dev.main(["--env-file", str(target), "test-hatchet"]) == 0
+    assert "SKIP Hatchet Cloud" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("configuration", [
+    "HATCHET_CLIENT_TOKEN=private-test-token\nHATCHET_CLIENT_TLS_STRATEGY=none",
+    "HATCHET_CLIENT_TOKEN_FILE=missing-cloud-token.txt",
+])
+def test_cloud_invalid_configuration_fails_instead_of_skipping(
+    tmp_path, monkeypatch, capsys, configuration,
+):
+    target = tmp_path / "cloud.env"
+    target.write_text("\n".join(f"{k}={v}" for k, v in environment().items())
+                      + "\n" + configuration)
+    monkeypatch.setattr(dev.os, "environ", {})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid Cloud settings must fail before database or process access")
+
+    monkeypatch.setattr(dev, "inspect_database", unexpected)
+    monkeypatch.setattr(dev, "run", unexpected)
+    assert dev.main(["--env-file", str(target), "test-hatchet"]) == 1
+    output = capsys.readouterr()
+    assert "SKIP" not in output.out
+    assert "private-test-token" not in output.err

@@ -21,21 +21,38 @@ logger = structlog.get_logger()
 def create_hatchet(settings: Settings) -> "Hatchet":
     from hatchet_sdk import Hatchet
     from hatchet_sdk.config import ClientConfig, ClientTLSConfig
+    from hatchet_sdk.token import get_addresses_from_jwt
 
     try:
+        token = settings.get_hatchet_token()
+        token_server, token_host = get_addresses_from_jwt(token)
+        host_port = settings.hatchet_client_host_port or token_host
+        server_url = settings.hatchet_server_url or token_server
+        settings.validate_hatchet_addresses(host_port, server_url)
         return Hatchet(
             config=ClientConfig(
-                token=settings.get_hatchet_token(),
-                host_port=settings.hatchet_client_host_port,
-                server_url=settings.hatchet_server_url,
-                tls_config=ClientTLSConfig(strategy="none"),
+                _env_file=None,
+                token=token,
+                host_port=host_port,
+                server_url=server_url,
+                namespace=settings.hatchet_client_namespace,
+                debug=False,
+                tls_config=ClientTLSConfig(
+                    _env_file=None,
+                    strategy=settings.hatchet_client_tls_strategy,
+                    server_name=settings.hatchet_client_tls_server_name,
+                    root_ca_file=str(settings.hatchet_client_tls_root_ca_file)
+                    if settings.hatchet_client_tls_root_ca_file is not None else None,
+                    cert_file=None,
+                    key_file=None,
+                ),
             )
         )
-    except ValueError:
+    except (ValueError, OSError):
         # SDK validation errors may include the raw token in the input/traceback.
         raise RuntimeError(
             "Hatchet client configuration is invalid; check HATCHET_CLIENT_TOKEN, "
-            "HATCHET_CLIENT_TOKEN_FILE and server addresses"
+            "HATCHET_CLIENT_TOKEN_FILE, server addresses and TLS settings"
         ) from None
 
 

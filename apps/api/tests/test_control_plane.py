@@ -154,8 +154,14 @@ def test_readiness_distinguishes_dependencies_and_migration_head(tmp_path: Path)
     assert unavailable.checks["storage"] is False
 
 
-def test_health_is_live_when_readiness_fails(raw_client: TestClient) -> None:
+def test_health_is_live_when_readiness_fails(raw_client: TestClient, monkeypatch) -> None:
+    from app import main
+
+    # A previously migrated PostgreSQL test DB can legitimately have a current Alembic head.
+    # Inject an unavailable dependency instead of assuming migrations are absent.
+    monkeypatch.setattr(main.workflow_starter, "ready", lambda: False)
     assert raw_client.get("/healthz").status_code == 200
     response = raw_client.get("/readyz")
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["workflow"] is False

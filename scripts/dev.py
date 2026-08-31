@@ -39,6 +39,9 @@ def load_environment(path: Path, inherited: dict[str, str]) -> dict[str, str]:
         raise PreflightError("These commands require ENVIRONMENT=development")
     storage = Path(env.get("STORAGE_ROOT", "./data/storage"))
     env["STORAGE_ROOT"] = str((ROOT / storage).resolve())
+    for key in ("HATCHET_CLIENT_TOKEN_FILE", "HATCHET_CLIENT_TLS_ROOT_CA_FILE"):
+        if env.get(key):
+            env[key] = str((ROOT / env[key]).resolve())
     env.setdefault("UV_CACHE_DIR", str(API / ".uv-cache"))
     env.setdefault("UV_NO_PYTHON_DOWNLOADS", "1")
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -184,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env")
     parser.add_argument("task", choices=[
         "check", "migrate", "api", "web", "worker", "test", "test-api", "test-web",
-        "e2e", "lint", "typecheck", "build", "generate-client",
+        "e2e", "lint", "typecheck", "build", "generate-client", "test-hatchet",
     ])
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -194,12 +197,23 @@ def main(argv: list[str] | None = None) -> int:
             env.pop(key, None)
             os.environ.pop(key, None)
         env["PGPASSFILE"] = os.devnull
+        if args.task == "test-hatchet":
+            if not (env.get("HATCHET_CLIENT_TOKEN", "").strip()
+                    or env.get("HATCHET_CLIENT_TOKEN_FILE")):
+                print("SKIP Hatchet Cloud: configure HATCHET_CLIENT_TOKEN or its token file")
+                return 0
+            if env.get("HATCHET_CLIENT_TLS_STRATEGY", "tls") != "tls":
+                raise PreflightError("Hatchet Cloud integration requires TLS strategy=tls")
+            env["RUN_HATCHET_CLOUD"] = "1"
         url = validate_database_pair(env)
         # Validate Settings without importing the API or initializing background workers.
         sys.path.insert(0, str(API))
         from app.config import Settings
 
-        Settings(_env_file=None, **{key.lower(): value for key, value in env.items()})
+        settings_values = {key.lower(): value for key, value in env.items()}
+        if args.task == "test-hatchet":
+            settings_values["workflow_backend"] = "hatchet"
+        Settings(_env_file=None, **settings_values)
         if args.task in {"check", "migrate"}:
             check_tools(env)
             current, expected, tables = inspect_database(url)
@@ -223,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             if env.get("WORKFLOW_BACKEND", "local") != "hatchet":
                 raise PreflightError("worker requires WORKFLOW_BACKEND=hatchet; local needs none")
             uv(["python", "-m", "app.worker", *args.args], env)
-        elif args.task in {"test", "test-api"}:
+        elif args.task in {"test", "test-api", "test-hatchet"}:
             test_url = validate_test_database(env, url)
             inspect_database(test_url)  # Never create or drop a database automatically.
             runtime_parent = API / ".test-tmp-native"
@@ -231,8 +245,9 @@ def main(argv: list[str] | None = None) -> int:
             runtime = Path(tempfile.mkdtemp(prefix="run-", dir=runtime_parent))
             env["TEST_RUNTIME_ROOT"] = str(runtime / "data")
             # A fresh directory avoids stale Windows ACLs and pytest deleting a shared temp root.
+            selection = ["tests/test_hatchet_cloud.py", "-rs"] if args.task == "test-hatchet" else []
             uv(["pytest", "-q", "--tb=short", "--basetemp", str(runtime / "pytest"),
-                "-o", f"cache_dir={runtime / 'cache'}", *args.args], env)
+                "-o", f"cache_dir={runtime / 'cache'}", *selection, *args.args], env)
             if args.task == "test":
                 pnpm(["test"], env)
         elif args.task == "test-web":

@@ -94,6 +94,7 @@ services:
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
+      HATCHET_CLIENT_TLS_STRATEGY: none
       MOCK_PROVIDER_WEBHOOK_SECRET: ${MOCK_PROVIDER_WEBHOOK_SECRET:-development-only-mock-webhook-secret}
       TEST_RUNTIME_ROOT: ${TEST_RUNTIME_ROOT:-/tmp/video-factory-tests}
       PYTEST_ADDOPTS: ${PYTEST_ADDOPTS:--o cache_dir=/tmp/video-factory-pytest-cache}
@@ -123,6 +124,7 @@ services:
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
+      HATCHET_CLIENT_TLS_STRATEGY: none
       OUTBOX_DISPATCHER_ENABLED: "false"
     command: python -m app.worker
     depends_on:

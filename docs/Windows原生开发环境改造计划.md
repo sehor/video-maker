@@ -9,11 +9,13 @@ WINDEV-02 已接入正式 Local Runner、FastAPI lifespan、就绪检查和 Reco
 本地生成沿用同一 `GenerationExecutionService`，不需要 Hatchet Token 或独立
 Worker。WINDEV-03 已实现 Windows 命令入口和环境分离，并在隔离 PostgreSQL
 库验证迁移、API/Web 与 E2E；用户授权后，本机 `video-maker` 开发库的迁移、
-API/Web 启动与就绪验证也已完成。WINDEV-04～06 的 Cloud TLS、CI 分离和 WSL 关闭状态总验收
-尚未完成，不能由上述验证替代。
+API/Web 启动与就绪验证也已完成。WINDEV-04 已实现 Cloud TLS 配置、Windows Worker
+信号适配与显式远程测试入口；真实 Cloud 验收待开发租户 Token。WINDEV-05～06 的
+CI 分离和 WSL 关闭状态总验收尚未完成，不能由离线验证替代。
 具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
 和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)，以及
-[WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)。
+[WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)和
+[WINDEV-04 验证记录](reports/WINDEV-04_HatchetCloud集成验证.md)。
 
 ## 1. 目标
 
@@ -119,8 +121,9 @@ WORKFLOW_BACKEND=local
 - Hatchet 集成模式使用 Windows 命令启动 Worker：
 
 ```powershell
-Set-Location apps/api
-uv run python -m app.worker
+./scripts/dev.ps1 worker
+# 独立测试库上的远程验收（无凭据时明确 SKIP）
+./scripts/dev.ps1 test-hatchet
 ```
 
 - Hatchet Client 改为延迟初始化，并支持 Cloud 所需的 TLS；Token 只从本机未跟踪的 `.env` 或安全变量读取。
@@ -263,6 +266,9 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 验收：新检出仓库在依赖已安装的 Windows 上，按 README 可在无 WSL/Docker 情况下启动完整开发栈。
 
 ### WINDEV-04：Hatchet Cloud 集成模式
+
+状态：实现与离线验证完成；真实云验收待凭据，尚未整体验收通过。
+操作手册见 [Hatchet Cloud Windows 集成](runbooks/HatchetCloud_Windows集成.md)。
 
 依赖：WINDEV-01。
 

@@ -35,7 +35,8 @@ testpaths = ["tests"]
 addopts = "--strict-markers"
 pythonpath = ["."]
 markers = [
-  "integration: requires the Compose PostgreSQL and Hatchet services"
+  "integration: requires explicitly configured PostgreSQL and Hatchet services",
+  "hatchet_cloud: opt-in remote Hatchet Cloud test with a native worker and isolated test database"
 ]
 
 [tool.ruff]

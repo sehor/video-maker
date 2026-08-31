@@ -208,7 +208,10 @@ def test_pinned_sdk_registers_workflows_without_server(monkeypatch) -> None:
         algorithm="HS256",
     )
     workflows = create_hatchet_workflows(
-        settings(workflow_backend="hatchet", hatchet_client_token=token)
+        settings(
+            workflow_backend="hatchet", hatchet_client_token=token,
+            hatchet_client_tls_strategy="none",
+        )
     )
     assert callable(workflows.generation_workflow.aio_run)
     assert callable(workflows.generation_provider_step.aio_run)

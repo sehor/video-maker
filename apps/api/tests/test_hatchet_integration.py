@@ -10,7 +10,7 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         os.environ.get("RUN_HATCHET_INTEGRATION") != "1",
-        reason="set RUN_HATCHET_INTEGRATION=1 with the Compose Hatchet services running",
+        reason="set RUN_HATCHET_INTEGRATION=1 with a configured Hatchet server and worker",
     ),
 ]
 

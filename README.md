@@ -77,14 +77,40 @@ dotenv 解析，不执行 PowerShell，不展开 `${...}`；密码中的 `$` 保
 
 E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账号、项目与镜头，
 不会清理已有用户数据。没有浏览器时按上文安装一次；普通 E2E 不启动 Compose。
-`worker` 命令仅接受 `WORKFLOW_BACKEND=hatchet`，Cloud 配置与集成验收由
-WINDEV-04 完成，Local 模式不需要运行它。
+Local 模式不需要运行 `worker`。可选的 Hatchet Cloud 模式见下节。
 
 Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
 容器环境单独使用 `.env.compose.example`（复制为忽略提交的 `.env.compose`）；
 旧容器入口为显式 `make compose-dev` / `make compose-stop`。不要将它的
 `postgres`、`web` 主机名或 `/data/storage` 路径复制到原生 `.env`。
 Compose/CI 的进一步隔离属于 WINDEV-05，本节不宣称完成整套原生验收计划。
+
+## 可选 Hatchet Cloud 集成
+
+在忽略提交的根 `.env` 配置开发租户的 `HATCHET_CLIENT_TOKEN` 或
+`HATCHET_CLIENT_TOKEN_FILE`，将 `WORKFLOW_BACKEND` 改为 `hatchet`，并设置
+API/Worker 共用的 `HATCHET_CLIENT_NAMESPACE`。默认 TLS 为 `tls`；Host 与
+Server URL 默认沿用 Token 内地址，不要填写 localhost 覆盖 Cloud 地址。
+Token 文件优先于直接配置的 Token；相对路径以仓库根为准。
+
+```powershell
+# 在三个终端分别启动，API 与 Worker 使用同一数据库、存储和命名空间
+./scripts/dev.ps1 worker
+./scripts/dev.ps1 api
+./scripts/dev.ps1 web
+# 独立验收：使用 TEST_DATABASE_URL，自动启动测试 Worker，无需上述进程
+./scripts/dev.ps1 test-hatchet
+```
+
+`test-hatchet` 即使日常 Backend 为 `local` 也会单独使用 Cloud，按次生成独立
+命名空间，检查真实耐久工作流、子任务、输出和重复提交复用。它会重建指定测试库
+业务表，并在 Cloud 留下测试工作流和运行记录；不应使用生产租户或共享测试库。
+无凭据时明确输出 `SKIP`，不连接数据库或 Cloud；普通测试默认跳过远程用例。
+已配置但无效的凭据应报错，不会自动退回 Local。
+
+当前已加入锁定 SDK 的 Windows 信号适配；真实 Cloud 验收仍待配置 Token 后执行。
+凭据创建、撤销、TLS 故障排查和兼容边界见
+[Hatchet Cloud Windows 集成手册](docs/runbooks/HatchetCloud_Windows集成.md)。
 
 ## SIM-05 模拟验收状态
 
