@@ -6,6 +6,10 @@
 状态：配置改造与本机验证完成。**没有执行 Docker 镜像构建或远程 GitHub CI**；
 不将静态检查、Windows 本机 E2E 或上一阶段结果记为容器集成通过。
 
+验收边界澄清（2026-08-31）：本阶段的 Windows 原生交付是将 Compose 从默认开发命令中
+隔离，并验证本机开发门禁。Docker 构建、Compose 联调和远程 CI 属于独立集成／发布验证，
+不列为 Windows 原生改造的剩余必做项，不要求为此启动本机 WSL/Docker。
+
 ## 改动与边界
 
 - Compose 所有服务增加 `integration` profile；Makefile 的容器入口明确传入 `.env.compose`
@@ -81,12 +85,14 @@ actionlint 官方校验和为
 `6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9`。
 schema 校验器和 actionlint 仅放在忽略提交的临时环境，未加入项目依赖。
 
-## 剩余验证与回滚
+## 独立集成验证与回滚
 
 本机没有 Windows Docker CLI，WSL 已停止，因此未为本轮验证启动 Docker，也未操作旧容器。
-需要在 CI 实际确认 Linux 镜像构建、Hatchet 服务端与锁定 SDK 的运行兼容性，以及容器内 E2E。
-Windows 构建产物 E2E 不能替代上述门禁。WINDEV-04 的真实 Cloud 验收仍待开发 Token；
-WINDEV-06 的整体矩阵和维护文档切换尚未完成，计划不标记 `ACCEPTED`。
+后续若验收容器集成能力，需要在对应环境实际确认 Linux 镜像构建、Hatchet 服务端与锁定
+SDK 的运行兼容性，以及容器内 E2E；Windows 构建产物 E2E 不能替代这些验证。
+这些未执行项不阻塞 Windows 原生改造验收。WINDEV-04 的真实 Cloud 验收仍待开发 Token，
+无凭据时按原生矩阵明确跳过；当前原生必做项为 WINDEV-06 的整体矩阵和维护文档切换，
+完成前计划保持 `IN_PROGRESS`。
 
 回滚以 `b286f96` 为前置参考，使用新的 revert 提交；不执行硬重置、清库或删除已有 volume。
 日常开发继续使用 Local Backend 和原生命令，不受容器集成是否运行影响。

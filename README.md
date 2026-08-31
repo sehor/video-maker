@@ -80,6 +80,8 @@ E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账�
 Local 模式不需要运行 `worker`。可选的 Hatchet Cloud 模式见下节。
 
 Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
+以下容器操作仅供独立集成／发布验证，不属于 Windows 原生开发的安装、启动或验收步骤。
+完成原生改造不要求启动 WSL/Docker，也不以远程容器 CI 通过为前提。
 容器只用于显式集成验证，先按维护文档预检并复用已有资源，再将
 `.env.compose.example` 复制为忽略提交的 `.env.compose`。不要将其中的 `postgres`、
 `web` 主机名或 `/data/storage` 路径复制到原生 `.env`。

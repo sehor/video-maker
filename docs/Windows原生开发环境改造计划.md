@@ -11,8 +11,10 @@ Worker。WINDEV-03 已实现 Windows 命令入口和环境分离，并在隔离 
 库验证迁移、API/Web 与 E2E；用户授权后，本机 `video-maker` 开发库的迁移、
 API/Web 启动与就绪验证也已完成。WINDEV-04 已实现 Cloud TLS 配置、Windows Worker
 信号适配与显式远程测试入口；真实 Cloud 验收待开发租户 Token。WINDEV-05 已实现
-Compose 显式隔离、构建产物启动和 CI 门禁分组，并通过本机相关门禁；远程 CI 与
-WINDEV-06 的 WSL 关闭状态总验收仍不能由离线验证替代。
+Compose 显式隔离、构建产物启动和 CI 门禁分组，并通过本机相关门禁。
+Docker 构建、Compose 运行和远程容器 CI 未执行，作为独立集成验证记录，
+不列为 Windows 原生改造的剩余必做项。当前原生必做项为 WINDEV-06 总验收与文档切换；
+Hatchet Cloud 按需验证，无凭据时按矩阵明确跳过，不将跳过记为云验收通过。
 具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
 和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)，以及
 [WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)和
@@ -37,6 +39,13 @@ WINDEV-06 的 WSL 关闭状态总验收仍不能由离线验证替代。
 - 默认开发模式不要求 `HATCHET_CLIENT_TOKEN`，也不启动独立 `hatchet-worker`。
 - Hatchet 集成模式下，API 和 `hatchet-worker` 都作为 Windows 进程运行，仅 Hatchet Server 使用云服务。
 - `ENVIRONMENT=production` 时配置 `WORKFLOW_BACKEND=local` 必须启动失败。
+
+### 验收边界（2026-08-31 澄清）
+
+- 本次交付是 Windows 原生开发环境；验收不安装、启动或依赖 WSL/Docker。
+- WINDEV-05 负责解除默认开发入口与 Compose 的耦合，并保留显式集成配置；
+  容器构建、Compose 联调和远程 CI 的实际运行属于独立集成／发布验证，不阻塞本次原生验收。
+- 未执行的容器或云测试须如实记录，不能将本机通过推断为这些环境也通过。
 
 ## 2. 默认假设与决策
 
@@ -287,7 +296,8 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 
 ### WINDEV-05：Compose 隔离与 CI 调整
 
-状态：实现与本机门禁验证完成；Docker 构建与远程 CI 尚未执行。
+状态：原生环境隔离改造与本机门禁验证完成；Docker 构建、Compose 联调和远程 CI
+尚未执行，列为独立集成验证，不作为本计划的待补验收项。
 
 依赖：WINDEV-03；可与 WINDEV-04 独立实施。
 
@@ -300,11 +310,14 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 
 不做：不删除发布容器能力，不改变 RunPod Worker 镜像。
 
-验收：本地命令不引用 Compose；CI 仍覆盖 PostgreSQL 并发、迁移、FFmpeg、OpenAPI 和 E2E 基线。
+原生验收：本地命令不调用 Compose；本机相关门禁通过；CI 配置保留 PostgreSQL 并发、
+迁移、FFmpeg、OpenAPI 和 E2E 基线。容器运行及远程 CI 结果单独记录，不以其通过作为
+WINDEV-06 的前置条件，也不把静态配置检查记为远程运行通过。
 
 ### WINDEV-06：WSL 关闭状态总验收与文档切换
 
-依赖：WINDEV-02、03、04、05。
+依赖：WINDEV-02、03、05 的原生实现与本机验证；WINDEV-04 为按需集成模式，
+无云凭据时按第 7 节跳过。Docker/Compose 运行及远程 CI 不作为前置条件。
 
 范围：
 
@@ -314,7 +327,9 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 
 不做：不宣称本地 Backend 具备 Hatchet 的生产耐久保证。
 
-验收：第 7 节全部通过后，计划状态从 `DRAFT` 更新为 `ACCEPTED`。
+验收：第 7 节所有必选门禁通过，按需项通过或明确记录跳过后，计划状态从
+`IN_PROGRESS` 更新为 `ACCEPTED`；该状态仅表示 Windows 原生改造验收通过，
+不代表尚未执行的云集成、容器验证或生产发布已通过。
 
 ## 7. 验收矩阵
 
