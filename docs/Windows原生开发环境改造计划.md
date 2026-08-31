@@ -1,8 +1,15 @@
 # Windows 原生开发环境改造计划
 
-> 状态：`DRAFT`，待批准后按 Issue 实施  
+> 状态：`IN_PROGRESS`，按独立工作项实施；尚未完成整体原生验收。
 > 日期：2026-08-30  
 > 背景：SIM-05 已完成；本计划只改造开发环境边界，不改变已经验收的业务语义。
+
+2026-08-31：WINDEV-01 已实现 Backend 配置、工厂、Hatchet 延迟注册和生产保护。
+当前 `local` 仅支持无 Hatchet 凭据导入 API；Runner 在 WINDEV-02 实现前保持
+未就绪。启用 Dispatcher 或 Reconciler 时启动会明确失败，避免把未实现的
+本地执行路径投入 Outbox 消费。WINDEV-02～06 尚未完成，不得据此宣称 Windows
+生成闭环可用。具体测试和数据库 URL 检查见
+[WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)。
 
 ## 1. 目标
 
@@ -120,9 +127,16 @@ uv run python -m app.worker
 开发环境默认连接：
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://video_factory:video_factory_dev@127.0.0.1:5432/video_factory
-BETTER_AUTH_DATABASE_URL=postgresql://video_factory:video_factory_dev@127.0.0.1:5432/video_factory
+DATABASE_URL=postgresql+psycopg://progres:replace-with-local-postgres-password@localhost:5432/video-maker
+BETTER_AUTH_DATABASE_URL=postgresql://progres:replace-with-local-postgres-password@localhost:5432/video-maker
 ```
+
+这里按用户提供的 `.env.example` 保留用户名 `progres` 和数据库 `video-maker`，
+不推断用户名是否拼写错误。两个 URL 必须指向同一开发库，但 API 的 SQLAlchemy
+需要显式选择 `psycopg` 驱动，Better Auth 的 node-postgres URL 不带 `+psycopg`。
+用户名和密码中的特殊字符必须 URL 编码。`POSTGRES_*` 不会被 API 自动补入 URL。
+已生成的根目录 `.env` 不提交；从 `apps/api` 运行时须显式加载
+`uv run --env-file ../../.env ...`，统一命令入口仍由 WINDEV-03 完成。
 
 要求：
 
@@ -325,4 +339,3 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 - 不改变 Job 状态机、Outbox、账本、结算、取消、重试和媒体校验语义。
 - 不顺带实现真实 RunPod、GPU、对象存储、支付或生产部署。
 - 不把 Hatchet Cloud、网络或任何外部服务设为日常单元测试前置条件。
-

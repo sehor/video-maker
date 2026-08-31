@@ -93,13 +93,13 @@ from app.schemas import (
 )
 from app.state_machine import transition_attempt, transition_job
 from app.storage import LocalObjectStorage, ObjectStorage, validate_media_header
-from app.workflow import HatchetWorkflowStarter
+from app.workflow import create_workflow_starter
 
 router = APIRouter(prefix="/v1")
 Db = Annotated[Session, Depends(get_db)]
 IdempotencyKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 GenerationOptions = Annotated[InternalGenerationOptions, Depends(get_internal_generation_options)]
-workflow_starter = HatchetWorkflowStarter()
+workflow_starter = create_workflow_starter(get_settings())
 
 
 def storage() -> ObjectStorage:

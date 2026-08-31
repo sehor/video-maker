@@ -16,7 +16,10 @@ pytestmark = [
 
 
 def test_real_hatchet_duplicate_start_reuses_workflow_run() -> None:
-    from app.hatchet_workflows import hatchet
+    from app.config import get_settings
+    from app.hatchet_workflows import create_hatchet_workflows
+
+    workflows = create_hatchet_workflows(get_settings())
 
     job_id = uuid.uuid4()
     request = WorkflowStartRequest(
@@ -24,11 +27,11 @@ def test_real_hatchet_duplicate_start_reuses_workflow_run() -> None:
         idempotency_key=f"generation-job:{job_id}:v1",
         payload={"job_id": str(job_id)},
     )
-    starter = HatchetWorkflowStarter()
+    starter = HatchetWorkflowStarter(workflows.generation_workflow)
 
     async def start_complete_and_replay():
         first = await starter.start(request)
-        await hatchet.runs.get_run_ref(first.workflow_id).aio_result()
+        await workflows.hatchet.runs.get_run_ref(first.workflow_id).aio_result()
         duplicate = await starter.start(request)
         return first, duplicate
 

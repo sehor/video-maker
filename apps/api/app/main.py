@@ -127,6 +127,12 @@ async def control_plane_reconciler_loop(stop: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    if settings.outbox_dispatcher_enabled or settings.reconciler_enabled:
+        if not workflow_starter.ready():
+            raise RuntimeError(
+                "Workflow backend is not ready: local runner requires WINDEV-02; "
+                "disable OUTBOX_DISPATCHER_ENABLED and RECONCILER_ENABLED for import-only checks"
+            )
     stop = asyncio.Event()
     tasks: list[asyncio.Task[None]] = []
     if settings.outbox_dispatcher_enabled:

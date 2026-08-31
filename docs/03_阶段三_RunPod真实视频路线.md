@@ -3,6 +3,10 @@
 > 目标：只上线一条稳定、可追溯的 720p 开放模型路线。  
 > 前置：阶段二的账本、Outbox、Hatchet、幂等和恢复测试全部通过。
 
+开发环境正在按 [Windows 原生开发环境改造计划](Windows原生开发环境改造计划.md)
+迁移。WINDEV-01 仅增加工作流 Backend 选择与生产保护，业务执行与账本语义不变；
+本地 Runner 尚未完成，现有集成栈显式使用 `WORKFLOW_BACKEND=hatchet`。
+
 ## 1. 交付范围
 
 - RunPod Serverless Endpoint；

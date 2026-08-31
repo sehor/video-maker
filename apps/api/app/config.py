@@ -7,10 +7,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     app_name: str = "Video Factory API"
     environment: str = "development"
+    workflow_backend: Literal["local", "hatchet"] = "local"
     database_url: str = (
         "postgresql+psycopg://video_factory:video_factory_dev@localhost:5432/video_factory"
     )
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
         "development-only-storage-claim-secret"
     )
     storage_claim_ttl_seconds: Annotated[int, Field(gt=0, le=900)] = 300
+    hatchet_client_token: SecretStr = Field(default=SecretStr(""), repr=False)
     hatchet_client_token_file: Path | None = None
     hatchet_client_host_port: str = "localhost:7077"
     hatchet_server_url: str = "http://localhost:8888"
@@ -59,6 +61,27 @@ class Settings(BaseSettings):
     media_cpu_count: Annotated[int, Field(gt=0, le=4)] = 1
     admin_auth_subjects: Annotated[list[str], NoDecode] = []
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+
+    @model_validator(mode="after")
+    def validate_workflow_backend(self) -> "Settings":
+        if self.environment == "production" and self.workflow_backend == "local":
+            raise ValueError(
+                "WORKFLOW_BACKEND=local is development-only; use hatchet in production"
+            )
+        if self.workflow_backend == "hatchet":
+            self.get_hatchet_token()
+        return self
+
+    def get_hatchet_token(self) -> str:
+        token = self.hatchet_client_token.get_secret_value().strip()
+        if self.hatchet_client_token_file is not None:
+            try:
+                token = self.hatchet_client_token_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                raise ValueError("HATCHET_CLIENT_TOKEN_FILE is unavailable") from None
+        if not token:
+            raise ValueError("HATCHET_CLIENT_TOKEN or HATCHET_CLIENT_TOKEN_FILE must be configured")
+        return token
 
     @field_validator("admin_auth_subjects", "cors_origins", mode="before")
     @classmethod

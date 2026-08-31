@@ -25,6 +25,8 @@ else:
     )
 os.environ["STORAGE_ROOT"] = str(test_runtime_root / "storage")
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
+os.environ["RECONCILER_ENABLED"] = "false"
+os.environ["WORKFLOW_BACKEND"] = "local"
 os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"
 os.environ["ADMIN_AUTH_SUBJECTS"] = "admin-user"

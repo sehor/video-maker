@@ -83,6 +83,7 @@ services:
     build: ./apps/api
     restart: unless-stopped
     environment:
+      WORKFLOW_BACKEND: hatchet
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://web:3000/api/auth/jwks}
       AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:3000}
@@ -115,6 +116,7 @@ services:
     build: ./apps/api
     restart: unless-stopped
     environment:
+      WORKFLOW_BACKEND: hatchet
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       STORAGE_ROOT: /data/storage
       STORAGE_CLAIM_SECRET: ${STORAGE_CLAIM_SECRET:-development-only-storage-claim-secret}

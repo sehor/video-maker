@@ -4,8 +4,9 @@ from datetime import timedelta
 from typing import Protocol
 
 import structlog
-from hatchet_sdk.exceptions import IdempotencyCollisionError
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.config import Settings, get_settings
 
 logger = structlog.get_logger()
 
@@ -105,20 +106,30 @@ async def run_durable_generation(
 class HatchetWorkflowStarter:
     """Starts the durable generation workflow through the pinned Hatchet SDK."""
 
-    def __init__(self, workflow: HatchetWorkflowRunnable | None = None) -> None:
+    def __init__(
+        self,
+        workflow: HatchetWorkflowRunnable | None = None,
+        *,
+        settings: Settings | None = None,
+    ) -> None:
         self._workflow = workflow
+        self._settings = settings
 
     def _get_workflow(self) -> HatchetWorkflowRunnable:
         if self._workflow is None:
-            from app.hatchet_workflows import generation_workflow
+            from app.hatchet_workflows import create_hatchet_workflows
 
-            self._workflow = generation_workflow
+            self._workflow = create_hatchet_workflows(
+                self._settings or get_settings()
+            ).generation_workflow
         return self._workflow
 
     def ready(self) -> bool:
         return callable(getattr(self._get_workflow(), "aio_run", None))
 
     async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
+        from hatchet_sdk.exceptions import IdempotencyCollisionError
+
         workflow_input = GenerationWorkflowInput(
             job_id=request.job_id,
             idempotency_key=request.idempotency_key,
@@ -146,3 +157,26 @@ class HatchetWorkflowStarter:
             reused=reused,
         )
         return WorkflowStartResult(workflow_id=workflow_id)
+
+
+class LocalWorkflowUnavailable:
+    """WINDEV-01 configuration boundary; the lifespan runner belongs to WINDEV-02."""
+
+    def ready(self) -> bool:
+        return False
+
+    async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
+        raise RuntimeError("Local workflow runner is unavailable until WINDEV-02 is implemented")
+
+
+def create_workflow_starter(settings: Settings) -> WorkflowStarter:
+    if settings.workflow_backend == "local":
+        if settings.environment == "production":
+            raise ValueError(
+                "WORKFLOW_BACKEND=local is development-only; use hatchet in production"
+            )
+        return LocalWorkflowUnavailable()
+    if settings.workflow_backend == "hatchet":
+        settings.get_hatchet_token()
+        return HatchetWorkflowStarter(settings=settings)
+    raise ValueError("WORKFLOW_BACKEND must be local or hatchet")
