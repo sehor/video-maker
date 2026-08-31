@@ -4,8 +4,9 @@
 > 前置：阶段二的账本、Outbox、Hatchet、幂等和恢复测试全部通过。
 
 开发环境正在按 [Windows 原生开发环境改造计划](Windows原生开发环境改造计划.md)
-迁移。WINDEV-01 仅增加工作流 Backend 选择与生产保护，业务执行与账本语义不变；
-本地 Runner 尚未完成，现有集成栈显式使用 `WORKFLOW_BACKEND=hatchet`。
+迁移。WINDEV-01/02 已加入工作流 Backend 选择、生产保护和随 API 生命周期
+运行的开发专用 Local Runner，业务执行与账本语义不变；现有集成栈显式使用
+`WORKFLOW_BACKEND=hatchet`。本机命令入口和完整环境验收仍由后续工作项完成。
 
 ## 1. 交付范围
 

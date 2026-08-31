@@ -2,7 +2,7 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import MetaData, create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,12 @@ def contract_db() -> Iterator[Session]:
     def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
         dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.create_all(engine)
+    # PostgreSQL AddConstraint DDL changes per-constraint compilation state. Clone
+    # metadata so an earlier PostgreSQL fixture cannot suppress SQLite's inline FKs.
+    metadata = MetaData()
+    for table in Base.metadata.tables.values():
+        table.to_metadata(metadata)
+    metadata.create_all(engine)
     with Session(engine) as session:
         yield session
     engine.dispose()

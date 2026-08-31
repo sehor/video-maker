@@ -255,7 +255,7 @@ def test_storage_cleanup_retries_partial_failure_and_records_each_object(
     keys = [item.object_key for item in cleanup_objects]
     assert len(keys) == 2
 
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     storage = FakeCleanupStorage(set(keys), fail_once={keys[1]})
     dispatcher = StorageCleanupDispatcher(
         SessionLocal,
@@ -299,7 +299,7 @@ def test_cleanup_reclaims_expired_lease_after_delete_crash(
     assert raw_client.delete(f"/v1/projects/{project['id']}").status_code == 204
     _, cleanup_objects = cleanup_state(project["id"])
     object_key = cleanup_objects[0].object_key
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     storage = FakeCleanupStorage({object_key})
 
     with pytest.raises(SimulatedCrash):

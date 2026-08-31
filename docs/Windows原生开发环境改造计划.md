@@ -4,12 +4,13 @@
 > 日期：2026-08-30  
 > 背景：SIM-05 已完成；本计划只改造开发环境边界，不改变已经验收的业务语义。
 
-2026-08-31：WINDEV-01 已实现 Backend 配置、工厂、Hatchet 延迟注册和生产保护。
-当前 `local` 仅支持无 Hatchet 凭据导入 API；Runner 在 WINDEV-02 实现前保持
-未就绪。启用 Dispatcher 或 Reconciler 时启动会明确失败，避免把未实现的
-本地执行路径投入 Outbox 消费。WINDEV-02～06 尚未完成，不得据此宣称 Windows
-生成闭环可用。具体测试和数据库 URL 检查见
-[WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)。
+2026-08-31：WINDEV-01 已实现 Backend 配置、工厂、Hatchet 延迟注册和生产保护；
+WINDEV-02 已接入正式 Local Runner、FastAPI lifespan、就绪检查和 Reconciler。
+本地生成沿用同一 `GenerationExecutionService`，不需要 Hatchet Token 或独立
+Worker。WINDEV-03～06 尚未完成；Windows 命令入口、开发库迁移、Cloud TLS、
+CI 分离和 WSL 关闭状态总验收不能由本次 Runner 验证替代。
+具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
+和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)。
 
 ## 1. 目标
 

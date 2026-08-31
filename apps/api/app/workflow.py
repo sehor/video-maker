@@ -159,23 +159,15 @@ class HatchetWorkflowStarter:
         return WorkflowStartResult(workflow_id=workflow_id)
 
 
-class LocalWorkflowUnavailable:
-    """WINDEV-01 configuration boundary; the lifespan runner belongs to WINDEV-02."""
-
-    def ready(self) -> bool:
-        return False
-
-    async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
-        raise RuntimeError("Local workflow runner is unavailable until WINDEV-02 is implemented")
-
-
 def create_workflow_starter(settings: Settings) -> WorkflowStarter:
     if settings.workflow_backend == "local":
         if settings.environment == "production":
             raise ValueError(
                 "WORKFLOW_BACKEND=local is development-only; use hatchet in production"
             )
-        return LocalWorkflowUnavailable()
+        from app.local_workflow import LocalWorkflowStarter
+
+        return LocalWorkflowStarter(settings)
     if settings.workflow_backend == "hatchet":
         settings.get_hatchet_token()
         return HatchetWorkflowStarter(settings=settings)

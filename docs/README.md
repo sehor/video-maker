@@ -34,6 +34,9 @@
 模拟控制面总验收见 `reports/SIM-05_模拟故障注入验收报告.md`；卡住任务、Dead Letter、
 Storage 清理和账本异常的恢复步骤见 `runbooks/模拟控制面故障恢复.md`。
 
+Windows 本地工作流的生命周期、去重、恢复边界和回归结果见
+`reports/WINDEV-02_LocalRunner验收.md`。
+
 架构决策记录位于 `docs/adr/`，依赖、模型和 custom node 的许可证台账位于
 `docs/licenses/`。新增或升级社区组件时必须同时更新对应 ADR 和台账。
 

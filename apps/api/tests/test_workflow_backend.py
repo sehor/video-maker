@@ -107,7 +107,7 @@ def test_invalid_hatchet_token_file_does_not_fall_back(tmp_path: Path, exists: b
 def test_local_does_not_read_hatchet_credentials(tmp_path: Path) -> None:
     starter = create_workflow_starter(settings(hatchet_client_token_file=tmp_path / "missing"))
     assert starter.ready() is False
-    with pytest.raises(RuntimeError, match="WINDEV-02"):
+    with pytest.raises(RuntimeError, match="lifespan"):
         asyncio.run(starter.start(WorkflowStartRequest(uuid.uuid4(), "local-test", {})))
 
 
@@ -223,7 +223,7 @@ def test_local_worker_fails_before_loading_hatchet(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("dispatcher,reconciler", [(True, False), (False, True), (True, True)])
-def test_unavailable_local_runner_does_not_consume_outbox(
+def test_lifespan_starts_runner_before_dispatchers_and_stops_it(
     monkeypatch, dispatcher: bool, reconciler: bool
 ) -> None:
     from app import main
@@ -234,13 +234,29 @@ def test_unavailable_local_runner_does_not_consume_outbox(
     )
     monkeypatch.setattr(main, "settings", configured)
     monkeypatch.setattr(main, "workflow_starter", create_workflow_starter(configured))
-    task_factory = Mock(side_effect=AssertionError("No dispatchers may start"))
-    monkeypatch.setattr(main.asyncio, "create_task", task_factory)
+    runner = main.workflow_starter
+    running_tasks = []
+
+    async def background_loop(stop):
+        assert runner.ready()
+        running_tasks.append(asyncio.current_task())
+        await stop.wait()
+
+    for name in (
+        "outbox_dispatcher_loop",
+        "provider_cancel_dispatcher_loop",
+        "storage_cleanup_dispatcher_loop",
+        "control_plane_reconciler_loop",
+    ):
+        monkeypatch.setattr(main, name, background_loop)
 
     async def startup():
+        assert not runner.ready()
         async with main.lifespan(main.app):
-            pytest.fail("local runner is not available in WINDEV-01")
+            assert runner.ready()
+            await asyncio.sleep(0)
+            assert len(running_tasks) == int(dispatcher) * 3 + int(reconciler)
+        assert not runner.ready()
+        assert all(task.done() for task in running_tasks)
 
-    with pytest.raises(RuntimeError, match="WINDEV-02"):
-        asyncio.run(startup())
-    task_factory.assert_not_called()
+    asyncio.run(startup())

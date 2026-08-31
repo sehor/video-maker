@@ -18,7 +18,7 @@ from app.models import (
     SettlementStatus,
     WalletBalance,
 )
-from app.provider_execution import GenerationExecutionService
+from app.provider_execution import GenerationExecutionService, ProviderExecutionStep
 from tests.test_mock_jobs import create_shot
 
 
@@ -67,7 +67,7 @@ def test_quote_snapshot_keeps_its_price_when_catalog_changes(
     client: TestClient, monkeypatch
 ) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -181,7 +181,7 @@ def test_final_failure_releases_reserved_seconds_once(client: TestClient) -> Non
 
 def test_insufficient_balance_rolls_back_quote_and_job(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -199,7 +199,7 @@ def test_insufficient_balance_rolls_back_quote_and_job(client: TestClient, monke
 
 def test_competing_submissions_cannot_overdraw(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -237,7 +237,7 @@ def test_grant_idempotency_key_rejects_different_amount(client: TestClient) -> N
 
 def test_quote_cannot_cross_user_boundary(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)

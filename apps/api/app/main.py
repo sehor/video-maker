@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.control_plane import ControlPlaneReconciler, ReadinessService
 from app.db import SessionLocal
 from app.errors import ApiError
+from app.local_workflow import LocalWorkflowStarter
 from app.outbox import DispatchResult
 from app.public_api import storage, workflow_starter
 
@@ -127,30 +128,33 @@ async def control_plane_reconciler_loop(stop: asyncio.Event) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    if settings.outbox_dispatcher_enabled or settings.reconciler_enabled:
-        if not workflow_starter.ready():
-            raise RuntimeError(
-                "Workflow backend is not ready: local runner requires WINDEV-02; "
-                "disable OUTBOX_DISPATCHER_ENABLED and RECONCILER_ENABLED for import-only checks"
-            )
     stop = asyncio.Event()
     tasks: list[asyncio.Task[None]] = []
-    if settings.outbox_dispatcher_enabled:
-        tasks.extend(
-            [
-            asyncio.create_task(outbox_dispatcher_loop(stop)),
-            asyncio.create_task(provider_cancel_dispatcher_loop(stop)),
-            asyncio.create_task(storage_cleanup_dispatcher_loop(stop)),
-            ]
-        )
-    if settings.reconciler_enabled:
-        tasks.append(asyncio.create_task(control_plane_reconciler_loop(stop)))
+    local_runner = workflow_starter if isinstance(workflow_starter, LocalWorkflowStarter) else None
     try:
+        if local_runner is not None:
+            await local_runner.startup()
+        if settings.outbox_dispatcher_enabled or settings.reconciler_enabled:
+            if not workflow_starter.ready():
+                raise RuntimeError(f"WORKFLOW_BACKEND={settings.workflow_backend} is not ready")
+        if settings.outbox_dispatcher_enabled:
+            tasks.extend(
+                [
+                    asyncio.create_task(outbox_dispatcher_loop(stop)),
+                    asyncio.create_task(provider_cancel_dispatcher_loop(stop)),
+                    asyncio.create_task(storage_cleanup_dispatcher_loop(stop)),
+                ]
+            )
+        if settings.reconciler_enabled:
+            tasks.append(asyncio.create_task(control_plane_reconciler_loop(stop)))
         yield
     finally:
-        if tasks:
-            stop.set()
-            await asyncio.gather(*tasks)
+        stop.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if local_runner is not None:
+            await local_runner.shutdown()
 
 
 app = FastAPI(

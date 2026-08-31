@@ -181,7 +181,7 @@ def test_concurrent_cancel_requests_create_one_outbox(raw_client: TestClient) ->
 def test_claim_crash_is_recovered_after_lease_expiry(raw_client: TestClient) -> None:
     running, _ = running_job(raw_client, PendingProvider())
     request_cancel(raw_client, running["id"])
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     worker = IdempotentCancelWorker()
 
     with pytest.raises(SimulatedCrash):
@@ -219,7 +219,7 @@ def test_provider_acceptance_with_lost_response_reuses_stable_key(
 ) -> None:
     running, _ = running_job(raw_client, PendingProvider())
     request_cancel(raw_client, running["id"])
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     worker = IdempotentCancelWorker("accepted_then_timeout", "accepted")
     dispatcher = ProviderCancelDispatcher(
         SessionLocal,
@@ -232,7 +232,10 @@ def test_provider_acceptance_with_lost_response_reuses_stable_key(
     retry = load_cancel_outbox(running["id"])
     assert retry.status == OutboxStatus.PENDING
     assert retry.attempt_count == 1
-    assert retry.next_attempt_at.replace(tzinfo=UTC) == clock.now + timedelta(seconds=5)
+    retry_at = retry.next_attempt_at
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=UTC)
+    assert retry_at == clock.now + timedelta(seconds=5)
     assert retry.last_error == "TimeoutError: provider accepted cancel but response was lost"
 
     clock.advance(timedelta(seconds=5))
@@ -247,7 +250,7 @@ def test_provider_acceptance_with_lost_response_reuses_stable_key(
 def test_dispatcher_renews_lease_during_provider_call(raw_client: TestClient) -> None:
     running, _ = running_job(raw_client, PendingProvider())
     request_cancel(raw_client, running["id"])
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     worker_started = asyncio.Event()
     allow_worker = asyncio.Event()
 
@@ -264,7 +267,7 @@ def test_dispatcher_renews_lease_during_provider_call(raw_client: TestClient) ->
             lease_renew_interval_seconds=0.01,
         )
         task = asyncio.create_task(dispatcher.dispatch_once())
-        await worker_started.wait()
+        await asyncio.wait_for(worker_started.wait(), timeout=5)
         clock.advance(timedelta(seconds=20))
         await asyncio.sleep(0.03)
         with SessionLocal() as db:
@@ -279,13 +282,17 @@ def test_dispatcher_renews_lease_during_provider_call(raw_client: TestClient) ->
 
     result, renewed_at = asyncio.run(exercise())
     assert result == DispatchResult.PUBLISHED
-    assert renewed_at == clock.now.replace(tzinfo=None)
+    assert renewed_at is not None
+    # SQLite returns naive timestamps; PostgreSQL preserves the UTC offset.
+    if renewed_at.tzinfo is None:
+        renewed_at = renewed_at.replace(tzinfo=UTC)
+    assert renewed_at == clock.now
 
 
 def test_temporary_cancel_failures_retry_until_success(raw_client: TestClient) -> None:
     running, _ = running_job(raw_client, PendingProvider())
     request_cancel(raw_client, running["id"])
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     worker = IdempotentCancelWorker("transient_failure", "transient_failure", "accepted")
     dispatcher = ProviderCancelDispatcher(
         SessionLocal,
@@ -312,7 +319,7 @@ def test_crash_after_provider_call_replays_without_duplicate_effect(
 ) -> None:
     running, _ = running_job(raw_client, PendingProvider())
     request_cancel(raw_client, running["id"])
-    clock = MutableClock(datetime(2026, 8, 31, tzinfo=UTC))
+    clock = MutableClock(datetime.now(UTC))
     worker = IdempotentCancelWorker()
 
     with pytest.raises(SimulatedCrash):
@@ -374,7 +381,7 @@ def test_cancel_and_success_race_settles_only_once(raw_client: TestClient) -> No
 
     async def race() -> None:
         dispatch = asyncio.create_task(dispatcher.dispatch_once())
-        await provider.cancel_started.wait()
+        await asyncio.wait_for(provider.cancel_started.wait(), timeout=5)
         provider.succeeded = True
         body = webhook_body(
             "evt-success-wins-cancel-race",

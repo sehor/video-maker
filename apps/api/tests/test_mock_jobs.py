@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import GenerationAttempt, GenerationOutput
-from app.provider_execution import GenerationExecutionService
+from app.provider_execution import GenerationExecutionService, ProviderExecutionStep
 from app.storage import LocalObjectStorage
 from tests.test_projects_permissions import create_project
 
@@ -107,7 +107,7 @@ def test_failure_timeout_corrupt_and_duplicate_are_explicit(client: TestClient) 
 
 def test_cancelled_job_is_terminal(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)

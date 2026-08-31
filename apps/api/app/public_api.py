@@ -27,6 +27,7 @@ from app.ledger import (
     reserve_quotes_for_batch,
     wallet_balances,
 )
+from app.local_workflow import LocalWorkflowStarter
 from app.models import (
     AttemptStatus,
     BatchStatus,
@@ -48,7 +49,12 @@ from app.models import (
     Shot,
     ShotReference,
 )
-from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
+from app.outbox import (
+    DispatchResult,
+    OutboxDispatcher,
+    enqueue_generation_workflow,
+    generation_workflow_key,
+)
 from app.project_cleanup import (
     StorageCleanupDispatcher,
     request_project_deletion,
@@ -93,7 +99,7 @@ from app.schemas import (
 )
 from app.state_machine import transition_attempt, transition_job
 from app.storage import LocalObjectStorage, ObjectStorage, validate_media_header
-from app.workflow import create_workflow_starter
+from app.workflow import WorkflowStartRequest, create_workflow_starter
 
 router = APIRouter(prefix="/v1")
 Db = Annotated[Session, Depends(get_db)]
@@ -202,6 +208,10 @@ async def dispatch_storage_cleanup_outbox() -> DispatchResult:
 
 
 async def reconcile_generation_job(job_id: uuid.UUID) -> object:
+    if isinstance(workflow_starter, LocalWorkflowStarter):
+        return await workflow_starter.start(
+            WorkflowStartRequest(job_id, generation_workflow_key(job_id), {"job_id": str(job_id)})
+        )
     return await GenerationExecutionService(storage()).execute(job_id)
 
 

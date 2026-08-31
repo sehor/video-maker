@@ -12,7 +12,7 @@ from app.models import (
     JobStatus,
     LedgerTransaction,
 )
-from app.provider_execution import GenerationExecutionService
+from app.provider_execution import GenerationExecutionService, ProviderExecutionStep
 from app.state_machine import transition_attempt, transition_job
 from tests.test_mock_jobs import create_shot
 from tests.test_quote_ledger import grant, quote
@@ -20,7 +20,7 @@ from tests.test_quote_ledger import grant, quote
 
 def queued_job(client: TestClient, monkeypatch) -> dict:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -213,7 +213,7 @@ def test_generation_idempotency_reuses_job_and_rejects_changed_body(
     client: TestClient, monkeypatch
 ) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -265,7 +265,7 @@ def test_stage_two_write_replays_do_not_repeat_grant_quote_or_cancel(
     client: TestClient, monkeypatch
 ) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
