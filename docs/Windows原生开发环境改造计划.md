@@ -127,14 +127,20 @@ uv run python -m app.worker
 开发环境默认连接：
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://progres:replace-with-local-postgres-password@localhost:5432/video-maker
-BETTER_AUTH_DATABASE_URL=postgresql://progres:replace-with-local-postgres-password@localhost:5432/video-maker
+DATABASE_URL=postgresql+psycopg://postgres:@localhost:5432/video-maker
+BETTER_AUTH_DATABASE_URL=postgresql://postgres:@localhost:5432/video-maker
 ```
 
-这里按用户提供的 `.env.example` 保留用户名 `progres` 和数据库 `video-maker`，
+这里按用户更新后的 `.env.example` 使用用户名 `postgres` 和数据库 `video-maker`，
 不推断用户名是否拼写错误。两个 URL 必须指向同一开发库，但 API 的 SQLAlchemy
 需要显式选择 `psycopg` 驱动，Better Auth 的 node-postgres URL 不带 `+psycopg`。
 用户名和密码中的特殊字符必须 URL 编码。`POSTGRES_*` 不会被 API 自动补入 URL。
+公开样例不保存实际口令：`POSTGRES_PASSWORD=`，URL 中 `postgres:@` 表示空值。
+本机 `.env` 的两个 URL 必须与当前 `POSTGRES_USER`、`POSTGRES_PASSWORD`、
+`POSTGRES_DB` 一致；字段不会在运行时自动同步，变更后须更新完整 URL。
+2026-08-31 已按用户最新本机字段对齐两个 URL，并分别通过 psycopg 3 和
+node-postgres 只读连接验证：用户 `postgres`、数据库 `video-maker`、PostgreSQL
+16.10。当前没有 Alembic 版本表，本次未执行迁移。
 已生成的根目录 `.env` 不提交；从 `apps/api` 运行时须显式加载
 `uv run --env-file ../../.env ...`，统一命令入口仍由 WINDEV-03 完成。
 

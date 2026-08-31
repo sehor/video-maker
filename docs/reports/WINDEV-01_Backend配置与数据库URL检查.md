@@ -27,29 +27,41 @@
 ## 数据库检查
 
 原始 `.env.example` 的 API URL 为 `postgresql://localhost:5432/video-maker`。
-这是可解析的 PostgreSQL URI，但缺少用户名和密码，并且 SQLAlchemy 默认驱动
+这是可解析的 PostgreSQL URI，但未指定连接用户，并且 SQLAlchemy 默认驱动
 与项目安装的 psycopg 3 不匹配。原 Better Auth URL 仍指向旧容器数据库。
 
-已统一目标为 `localhost:5432/video-maker`，保留用户指定的 `progres`：
+已统一目标为 `localhost:5432/video-maker`。原样例用户名为 `progres`，
+用户在本轮检查中将 `.env.example` 及本机 `POSTGRES_USER` 改为 `postgres`，
+本轮保留该更正：
 
 - API：`postgresql+psycopg://`，显式使用 psycopg 3。
 - Better Auth：`postgresql://`，使用 node-postgres 接受的格式。
-- 两个 URL 均包含凭据位置；公开样例仅保留口令占位符。
+- 公开样例不保存实际口令，使用 `POSTGRES_PASSWORD=`，两个 URL 用
+  `postgres:@localhost:5432/video-maker` 表示空值；本机 `.env` 不提交。
 
 任务开始时不存在根目录或 `apps/api/.env`。已使用原有本机值生成被忽略的
 根目录 `.env`，凭据经过 URL 编码；原始样例另存于被忽略的临时目录。
-没有覆盖用户已有 `.env`，没有把实际口令加入提交。
+本轮最终按用户要求，使用当前 `.env` 的 `POSTGRES_USER`、`POSTGRES_PASSWORD`
+和 `POSTGRES_DB` 对齐 API/Auth 两个完整 URL，密码经过 URL 编码，其他本机配置
+保持不变。此前 API URL 中的用户名与这三个字段不一致；这些字段不会自动
+改写 `DATABASE_URL`，需要同步更新两个 URL。
 
 验证分开记录：
 
-1. URL 解析与 psycopg 3 驱动加载通过；不再从 `POSTGRES_*` 猜补连接参数。
-2. Windows `postgresql-x64-16` 服务状态为 Running。
-3. 使用修正后的完整 `.env` URL 只读连接时，IPv4 连接到服务器后仍收到
-   用户 `progres` 的认证失败；IPv6 在当前执行环境被拒绝。
-   因此数据库登录、库存在性与 Alembic head 尚未验收。
+1. 公开样例的 URL 格式、驱动、用户/库名字段一致性通过；API `Settings`
+   显式加载根目录 `.env` 的来源验证通过。
+2. 使用当前 `.env` 完整 `DATABASE_URL`，通过 SQLAlchemy/psycopg 3 只读连接。
+   排除进程 `PGPASSWORD`、service 和 pgpass 文件补入其他口令。
+3. 使用 Web 项目安装的 node-postgres 和当前 `BETTER_AUTH_DATABASE_URL`
+   只读连接，同样通过。
+4. 两个驱动均返回数据库 `video-maker`、用户 `postgres`；服务器版本为
+   PostgreSQL 16.10。当前库没有 `public.alembic_version`，迁移尚未执行。
+5. Windows 服务为 `postgresql-x64-16`，本机 `pg_hba.conf` 规则仍是
+   `scram-sha-256`，未修改认证规则。
 
-未执行迁移、建库、删库、清空数据、启动 WSL 或 Docker。用户名与密码的有效性
-需由实际本机配置确认；不能把初始 URL 格式问题与后续认证结果混为一谈。
+先前在字段与 URL 尚未对齐时的失败记录，已由以上成功连接结果更新。
+本轮只验证连接与数据库状态，未执行迁移、建库、删库、清空数据、启动 WSL
+或 Docker，也没有修改用户的数据库认证策略。
 
 ## 验证
 
