@@ -187,3 +187,53 @@ Provider 提交后的取消已改为独立 Cancel Outbox：API 只在 PostgreSQL
 成功、最终失败和迟到事件继续进入统一完成路径；每个 Job 只允许 Settle 或 Release 之一，
 且各最多一次。本节仍只表示模拟控制面验收，不调用真实 Provider、RunPod 或 GPU，也不
 改变真实路线的 `CONDITIONAL`／默认禁用状态。
+
+## 14. SIM-03 项目软删除与 Storage Cleanup 模拟验收状态
+
+Project 删除已改为软删除：API 在项目行锁下检查活动 Job，并在 PostgreSQL 同一事务中
+提交 `DELETED`、`deleted_at` 和唯一的
+`project:{project_id}:storage-cleanup:v1` 事件。列表与详情默认隐藏已删除项目，所有新增
+Shot、Asset、Quote、Generation 和 Batch 的入口复用 ACTIVE Project 检查；重复删除保持
+204 幂等，Job、Attempt、Event、Output 和账本历史不会随项目删除而移除。Public Project
+Schema 不暴露内部删除状态。
+
+Storage Cleanup dispatcher 逐对象保存素材／输出的删除尝试、错误和完成时间，支持领取
+竞争、租约过期重领、临时失败退避、部分成功后继续以及对象已缺失的幂等成功。离线测试
+使用 Fake Clock、模拟 Storage 与崩溃注入，覆盖删除前后崩溃和重复派发；未接入真实 R2、
+RunPod、GPU 或付费服务，也不改变真实路线的 `CONDITIONAL`／默认禁用状态。
+
+## 15. SIM-04 控制面恢复、死信与就绪状态
+
+模拟控制面新增定时 Reconciler：它扫描过期 Provider Event 租约和长时间无进展的
+Job／Attempt，并只调用现有幂等 Generation 执行入口及 Generation、Cancel、Storage Cleanup
+dispatcher，不直接写任务终态、发布结果或账本。重复执行仍受稳定幂等键、Attempt 轮询账本
+和统一完成路径保护。
+
+三类 Outbox 达到配置的最大尝试次数后进入 `DEAD_LETTER`，同时在
+`dead_letter_events` 保存来源、原始事件、错误和尝试次数。受 Admin 权限保护的接口提供查询、
+显式回放、回放审计查询及待处理数、最老事件年龄、重试数、死信数和卡住 Job 数；回放不允许
+提交替换 payload，重复回放保持幂等。
+
+`/healthz` 继续只表示 API 进程存活；`/readyz` 检查数据库连接、Alembic 迁移 head、Storage
+和工作流启动能力，任何关键检查失败均返回 503。本节仍是离线模拟控制面验收，不代表真实
+RunPod、真实对象存储或真实 Hatchet 服务已经生产就绪。
+
+## 16. SIM-05 模拟故障注入总验收状态
+
+离线、确定性的控制面总验收已完成，当前状态为 `SIMULATION_ACCEPTED`。验收矩阵汇总 Submit、Poll、
+Webhook、Retry、Cancel、Finalize、Ledger、Project、Storage、Dead Letter 与 Readiness，
+并验证每个 Job 最多发布一个最终 Output，`SETTLE`／`RELEASE` 互斥且各最多一次。
+时间相关生命周期测试使用 Fake Clock；跨系统故障使用模拟 Provider／Storage、
+`FaultInjector` 和媒体 fixture。
+
+PostgreSQL 从空库迁移到唯一 Alembic head `0011_control_plane_recovery` 已通过；并发账本回归
+连续 3 轮通过；Playwright 完整业务闭环通过（1 passed）。Docker 验收复用了现有镜像和数据卷，
+未构建或拉取镜像。
+
+完整矩阵、自动化测试映射与门禁记录见
+`reports/SIM-05_模拟故障注入验收报告.md`，故障恢复步骤见
+`runbooks/模拟控制面故障恢复.md`。
+
+本状态不验证真实 GPU、RunPod、网络、对象存储、Hatchet 服务、视频质量、性能或成本。
+真实 RunPod／worker-comfyui 路线仍为 `CONDITIONAL`／默认禁用，不能据此启用或对外宣称
+真实 POC、Benchmark 或生产就绪。

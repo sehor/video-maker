@@ -48,14 +48,16 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "ledger_postings",
         "api_idempotency_records",
         "outbox_events",
+        "storage_cleanup_events",
+        "storage_cleanup_objects",
         "provider_event_inbox",
+        "dead_letter_events",
+        "admin_operation_audits",
     } <= tables
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
     with engine.connect() as connection:
         triggers = set(
-            connection.scalars(
-                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-            )
+            connection.scalars(text("SELECT name FROM sqlite_master WHERE type = 'trigger'"))
         )
     assert {
         "ledger_postings_immutable_update",
@@ -159,8 +161,7 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         "uq_generation_batches_reservation_identity",
         "uq_generation_batches_reserved_tx_id",
     } <= {
-        constraint["name"]
-        for constraint in inspector.get_unique_constraints("generation_batches")
+        constraint["name"] for constraint in inspector.get_unique_constraints("generation_batches")
     }
     assert "uq_generation_jobs_standalone_reserved_tx_id" in {
         index["name"] for index in inspector.get_indexes("generation_jobs")
@@ -178,9 +179,7 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     assert {
         "uq_outbox_events_job_event",
         "uq_outbox_events_idempotency_key",
-    } <= {
-        constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")
-    }
+    } <= {constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")}
     assert "fk_outbox_events_attempt_job" in {
         constraint["name"] for constraint in inspector.get_foreign_keys("outbox_events")
     }
@@ -188,9 +187,34 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         index["name"] for index in inspector.get_indexes("outbox_events")
     }
     assert "ck_outbox_events_cancel_attempt" in {
-        constraint["name"]
-        for constraint in inspector.get_check_constraints("outbox_events")
+        constraint["name"] for constraint in inspector.get_check_constraints("outbox_events")
     }
+    assert {"status", "deleted_at"} <= {
+        column["name"] for column in inspector.get_columns("projects")
+    }
+    assert "ck_projects_deletion_state" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("projects")
+    }
+    assert {
+        "project_id",
+        "idempotency_key",
+        "status",
+        "attempt_count",
+        "next_attempt_at",
+        "locked_at",
+        "lock_token",
+        "published_at",
+        "last_error",
+    } <= {column["name"] for column in inspector.get_columns("storage_cleanup_events")}
+    assert {
+        "event_id",
+        "object_key",
+        "object_kind",
+        "status",
+        "attempt_count",
+        "cleaned_at",
+        "last_error",
+    } <= {column["name"] for column in inspector.get_columns("storage_cleanup_objects")}
     assert {
         "provider_code",
         "external_event_id",

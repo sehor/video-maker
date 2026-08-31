@@ -3,6 +3,9 @@ import asyncio
 import uuid
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
 from app.config import get_settings
 from app.db import SessionLocal
 from app.models import GenerationJob, JobEvent
@@ -18,9 +21,6 @@ from app.provider import (
 )
 from app.provider_execution import AttemptBudget, GenerationExecutionService
 from app.storage import LocalObjectStorage
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-
 from tests.test_mock_jobs import create_shot, generate
 
 

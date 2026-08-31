@@ -61,7 +61,7 @@ def test_success_records_complete_job_and_attempt_state_machines(client: TestCli
     attempt_transitions = {
         (event.from_status, event.to_status)
         for event in events
-        if event.attempt_id is not None
+        if event.attempt_id is not None and event.from_status != event.to_status
     }
     assert job_transitions == {
         ("CREATED", "RESERVED"),
@@ -79,6 +79,11 @@ def test_success_records_complete_job_and_attempt_state_machines(client: TestCli
         ("SUBMITTED", "RUNNING"),
         ("RUNNING", "SUCCEEDED"),
     }
+    assert any(
+        event.event_type == "provider.poll_started"
+        and event.from_status == event.to_status == "RUNNING"
+        for event in events
+    )
 
 
 def test_illegal_transitions_are_rejected_and_rollback_removes_event(

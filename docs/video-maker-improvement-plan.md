@@ -2000,12 +2000,38 @@ Benchmark。最终结论只能表述为“模拟控制面验收通过”，不�
 - 模拟 Storage 最终完成全部允许的对象清理。
 - 重放 Cleanup 事件不会产生错误结果或破坏审计数据。
 
+### 实现状态（2026-08-30）
+
+- [x] 迁移 `0010_project_soft_delete` 为 Project 增加一致性约束保护的 `ACTIVE`／
+  `DELETED` 状态和 `deleted_at`，并新增唯一 `storage_cleanup_events` 与逐对象结果表。
+- [x] 删除 API 使用项目行锁，在同一事务提交软删除状态和
+  `project:{project_id}:storage-cleanup:v1`；重复删除复用同一事件，活动 Job 返回
+  `PROJECT_HAS_ACTIVE_JOBS`。
+- [x] Project 列表／详情默认隐藏已删除项目；Shot、Asset、Quote、Generation 与 Batch
+  写入口在 ACTIVE Project 行锁下校验，删除后的新增与修改请求被拒绝。
+- [x] Cleanup dispatcher 支持 `SKIP LOCKED` 领取、租约过期重领、失败退避、缺失对象幂等、
+  逐对象尝试／错误／完成记录，以及素材元数据的 `DELETED` 标记。
+- [x] 定向测试覆盖审计历史保留、活动任务拒删、重复删除、部分清理失败、删除后崩溃、
+  对象缺失重放和删除后禁止新增；只使用模拟 Storage 与 Fake Clock，未接入真实对象存储。
+
 ## 6.5 SIM-04：Reconciler、Dead Letter 与 Readiness
 
 ### 目标
 
 让模拟控制面能够发现和处理卡住的任务、过期租约及永久失败事件，并能从健康检查中
 区分“进程存活”和“系统可工作”。
+
+### 实施状态（2026-08-30）
+
+已完成。控制面 Reconciler 复用现有 Generation 执行与三类 Outbox dispatcher，恢复过期
+Provider Event 租约并重新进入幂等业务入口，不直接修改任务终态或账本。Generation、Cancel
+和 Storage Cleanup Outbox 统一使用可配置重试上限；永久失败后保留原事件、错误和尝试次数，
+进入 `dead_letter_events`。受保护的 Admin API 支持死信查询、显式回放、操作审计查询和最小
+运行指标；重复回放不会重复恢复事件或写入第二条审计。
+
+`/healthz` 仅表示进程存活，`/readyz` 分别检查数据库连接、Alembic head、Storage 和工作流
+启动能力，任一关键依赖失败即返回 503。后台 Reconciler 默认每 30 秒运行一次，可通过配置
+调整或禁用。本 Issue 未接入外部告警平台，也未建立通用工作流系统。
 
 ### 范围
 
@@ -2040,6 +2066,16 @@ Benchmark。最终结论只能表述为“模拟控制面验收通过”，不�
 ### 目标
 
 用完全离线、确定性的模拟链路证明控制面不变量，并明确真实能力边界。
+
+### 实施状态（2026-08-30）
+
+实现、故障矩阵、Runbook 和验收报告已收口；离线 API 结果为
+183 passed、1 skipped、1 deselected，Ruff、仓库命令基线、Worker contract、Vitest、
+ESLint、Typecheck、Build 和 OpenAPI Client 生成均通过。
+
+PostgreSQL 空库迁移到唯一 Alembic head 已通过，并发账本回归连续 3 轮通过；Playwright
+完整业务闭环通过（1 passed）。当前状态为 `SIMULATION_ACCEPTED`，真实路线继续
+`CONDITIONAL`／默认禁用。
 
 ### 范围
 
@@ -2186,9 +2222,9 @@ outbox_dead_letter        # SIM-04：Dead Letter 和重放审计
 - [ ] Public API 不暴露模拟和 Provider 内部字段；
 - [ ] Asset 通过短期 Claim 进入模拟 Worker；
 - [ ] Tier 绑定不可变 Route Version，未实现能力不可售卖；
-- [ ] Reconciler 可恢复过期租约和卡住任务，不绕过状态机修改结果；
-- [ ] 永久失败事件进入可查询、可审计、可显式重放的 Dead Letter；
-- [ ] Readiness 在数据库、Storage 或工作流能力不可用时正确失败；
+- [x] Reconciler 可恢复过期租约和卡住任务，不绕过状态机修改结果；
+- [x] 永久失败事件进入可查询、可审计、可显式重放的 Dead Letter；
+- [x] Readiness 在数据库、Storage 或工作流能力不可用时正确失败；
 - [ ] PostgreSQL 并发、故障注入、Pytest、Ruff、Vitest、ESLint、Typecheck、Build、Playwright 全部通过；
 - [ ] Poll、Webhook、Retry、Cancel 和 Finalize 继续复用统一幂等完成规则；
 - [ ] README、阶段文档、Runbook 与模拟验收报告和实际实现一致；

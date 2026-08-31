@@ -9,7 +9,14 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.models import GenerationAttempt, GenerationJob, OutboxEvent, OutboxStatus
+from app.dead_letters import add_dead_letter
+from app.models import (
+    DeadLetterSource,
+    GenerationAttempt,
+    GenerationJob,
+    OutboxEvent,
+    OutboxStatus,
+)
 from app.outbox import DispatchResult
 from app.provider import provider_cancel_key
 
@@ -70,6 +77,7 @@ class ProviderCancelDispatcher:
         *,
         lease_duration: timedelta = timedelta(seconds=30),
         retry_delay: timedelta = timedelta(seconds=1),
+        max_attempts: int = 5,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         lease_renew_interval_seconds: float | None = None,
     ) -> None:
@@ -77,6 +85,7 @@ class ProviderCancelDispatcher:
         self.worker = worker
         self.lease_duration = lease_duration
         self.retry_delay = retry_delay
+        self.max_attempts = max_attempts
         self.clock = clock
         self.lease_renew_interval_seconds = (
             lease_renew_interval_seconds
@@ -85,6 +94,8 @@ class ProviderCancelDispatcher:
         )
         if self.lease_renew_interval_seconds <= 0:
             raise ValueError("provider cancel lease renewal interval must be positive")
+        if max_attempts <= 0:
+            raise ValueError("provider cancel max attempts must be positive")
 
     async def dispatch_once(self) -> DispatchResult:
         event = self._claim_one()
@@ -103,8 +114,7 @@ class ProviderCancelDispatcher:
             stop_renewal.set()
             await renewal
         if error is not None:
-            self._schedule_retry(event, error)
-            return DispatchResult.RETRY_SCHEDULED
+            return self._schedule_retry(event, error)
         self.after_cancel(event)
         self._mark_published(event)
         return DispatchResult.PUBLISHED
@@ -212,28 +222,54 @@ class ProviderCancelDispatcher:
             except TimeoutError:
                 self._renew_lease(event)
 
-    def _schedule_retry(self, event: ClaimedProviderCancelEvent, exc: Exception) -> None:
+    def _schedule_retry(
+        self, event: ClaimedProviderCancelEvent, exc: Exception
+    ) -> DispatchResult:
         now = self.clock()
+        error = f"{type(exc).__name__}: {exc}"[:2000]
         with self.session_factory() as db:
-            retried = db.execute(
-                update(OutboxEvent)
+            source = db.scalar(
+                select(OutboxEvent)
                 .where(
                     OutboxEvent.id == event.request.outbox_event_id,
                     OutboxEvent.status == OutboxStatus.PROCESSING,
                     OutboxEvent.lock_token == event.lock_token,
                 )
-                .values(
-                    status=OutboxStatus.PENDING,
-                    next_attempt_at=now + self.retry_delay,
-                    locked_at=None,
-                    lock_token=None,
-                    last_error=f"{type(exc).__name__}: {exc}"[:2000],
-                )
+                .with_for_update()
             )
-            if retried.rowcount != 1:
+            if source is None:
                 db.rollback()
                 raise RuntimeError("provider cancel outbox lease was lost while retrying")
+            if source.attempt_count >= self.max_attempts:
+                source.status = OutboxStatus.DEAD_LETTER
+                add_dead_letter(
+                    db,
+                    source_type=DeadLetterSource.OUTBOX,
+                    source_id=source.id,
+                    event_type=source.event_type,
+                    payload=dict(source.payload_json),
+                    attempt_count=source.attempt_count,
+                    error=error,
+                )
+                result = DispatchResult.DEAD_LETTERED
+            else:
+                source.status = OutboxStatus.PENDING
+                source.next_attempt_at = now + self.retry_delay
+                result = DispatchResult.RETRY_SCHEDULED
+            source.locked_at = None
+            source.lock_token = None
+            source.last_error = error
             db.commit()
+        if result == DispatchResult.DEAD_LETTERED:
+            logger.error(
+                "provider_cancel_outbox.dead_lettered",
+                outbox_event_id=str(event.request.outbox_event_id),
+                job_id=str(event.request.job_id),
+                attempt_id=str(event.request.attempt_id),
+                attempt_count=self.max_attempts,
+                error_type=type(exc).__name__,
+            )
+            return result
         logger.warning(
             "provider_cancel_outbox.retry_scheduled",
             outbox_event_id=str(event.request.outbox_event_id),
@@ -241,6 +277,7 @@ class ProviderCancelDispatcher:
             attempt_id=str(event.request.attempt_id),
             error_type=type(exc).__name__,
         )
+        return result
 
     def _mark_published(self, event: ClaimedProviderCancelEvent) -> None:
         now = self.clock()

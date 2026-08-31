@@ -3,7 +3,12 @@ from datetime import datetime
 
 from pydantic import Field
 
-from app.models import AttemptStatus, JobStatus
+from app.models import (
+    AttemptStatus,
+    DeadLetterSource,
+    DeadLetterStatus,
+    JobStatus,
+)
 from app.schemas import OrmModel
 
 
@@ -52,3 +57,35 @@ class AdminGenerationDiagnosticsOut(OrmModel):
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class AdminDeadLetterOut(OrmModel):
+    id: uuid.UUID
+    source_type: DeadLetterSource
+    source_id: uuid.UUID
+    event_type: str
+    payload_json: dict[str, object]
+    attempt_count: int
+    cycle_count: int
+    last_error: str
+    status: DeadLetterStatus
+    replayed_at: datetime | None
+    created_at: datetime
+
+
+class AdminOperationAuditOut(OrmModel):
+    id: uuid.UUID
+    actor_user_id: uuid.UUID
+    operation_type: str
+    target_type: str
+    target_id: uuid.UUID
+    details_json: dict[str, object]
+    created_at: datetime
+
+
+class AdminOperationalMetricsOut(OrmModel):
+    pending_count: int
+    oldest_pending_age_seconds: float | None
+    retry_count: int
+    dead_letter_count: int
+    stuck_job_count: int

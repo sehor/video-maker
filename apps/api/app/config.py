@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     hatchet_server_url: str = "http://localhost:8888"
     outbox_dispatcher_enabled: bool = True
     outbox_poll_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 0.5
+    outbox_max_attempts: Annotated[int, Field(gt=0, le=100)] = 5
+    reconciler_enabled: bool = True
+    reconciler_interval_seconds: Annotated[float, Field(gt=0, le=300)] = 30
+    reconciler_stuck_after_seconds: Annotated[int, Field(gt=0, le=86_400)] = 300
     mock_provider_webhook_secret: str | None = None
     generation_route_version: Literal[
         "mock_video_v1", "runpod_simulated_v1"

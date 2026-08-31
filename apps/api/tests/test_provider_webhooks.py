@@ -160,11 +160,24 @@ def test_webhook_requires_valid_signature_and_deduplicates_completion(
     headers = {"x-provider-signature": signature(body)}
     first = raw_client.post("/v1/provider-webhooks/mock", content=body, headers=headers)
     duplicate = raw_client.post("/v1/provider-webhooks/mock", content=body, headers=headers)
+    conflicting_body = webhook_body(
+        "evt-duplicate",
+        provider_job_id,
+        ProviderStatus.FAILED,
+        failure_code=FailureCode.WORKFLOW_FAILED.value,
+    )
+    conflicting = raw_client.post(
+        "/v1/provider-webhooks/mock",
+        content=conflicting_body,
+        headers={"x-provider-signature": signature(conflicting_body)},
+    )
     assert first.status_code == duplicate.status_code == 202
     assert first.json() == duplicate.json() == {
         "event_id": "evt-duplicate",
         "status": "PROCESSED",
     }
+    assert conflicting.status_code == 202
+    assert conflicting.json() == first.json()
 
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(ProviderEventInbox)) == 1

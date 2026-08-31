@@ -16,6 +16,8 @@ from app.models import (
     LedgerPosting,
     LedgerTransaction,
     PriceVersion,
+    Project,
+    ProjectStatus,
     QualityTier,
     Quote,
     QuoteStatus,
@@ -425,10 +427,7 @@ def _validate_quote_terms(
         raise ApiError(409, "QUOTE_ALREADY_USED", "报价已使用")
     if aware(quote.expires_at) <= now:
         raise ApiError(409, "QUOTE_EXPIRED", "报价已过期")
-    if (
-        quote.duration_ms != shot.duration_seconds * 1000
-        or quote.aspect_ratio != shot.aspect_ratio
-    ):
+    if quote.duration_ms != shot.duration_seconds * 1000 or quote.aspect_ratio != shot.aspect_ratio:
         raise ApiError(409, "QUOTE_PARAMETERS_CHANGED", "镜头参数已变化，请重新报价")
     tier = db.get(QualityTier, quote.tier_code)
     if tier is None or not tier.enabled or quote.resolution != "720P":
@@ -452,6 +451,20 @@ def reserve_quotes_for_batch(
     by_id = {quote.id: quote for quote in quotes}
     if len(by_id) != len(quote_ids):
         raise not_found("quote")
+    project_ids = {quote.project_id for quote in quotes}
+    if len(project_ids) != 1:
+        raise ApiError(422, "BATCH_PROJECT_MISMATCH", "Batch 中的报价必须属于同一项目")
+    project = db.scalar(
+        select(Project)
+        .where(
+            Project.id == next(iter(project_ids)),
+            Project.owner_id == user.id,
+            Project.status == ProjectStatus.ACTIVE,
+        )
+        .with_for_update()
+    )
+    if project is None:
+        raise not_found("project")
 
     now = utcnow()
     claimed: list[tuple[Quote, Shot, dict[str, object]]] = []

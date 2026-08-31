@@ -42,12 +42,17 @@ from app.models import (
     Project,
     ProjectAsset,
     ProjectAssetStatus,
+    ProjectStatus,
     Quote,
     SettlementStatus,
     Shot,
     ShotReference,
 )
 from app.outbox import DispatchResult, OutboxDispatcher, enqueue_generation_workflow
+from app.project_cleanup import (
+    StorageCleanupDispatcher,
+    request_project_deletion,
+)
 from app.provider_cancel_outbox import (
     ProviderCancelDispatcher,
     ProviderCancelRequest,
@@ -167,7 +172,11 @@ def route_for_shot(
 
 
 async def dispatch_generation_outbox() -> DispatchResult:
-    return await OutboxDispatcher(SessionLocal, workflow_starter).dispatch_once()
+    return await OutboxDispatcher(
+        SessionLocal,
+        workflow_starter,
+        max_attempts=get_settings().outbox_max_attempts,
+    ).dispatch_once()
 
 
 async def execute_provider_cancel(request: ProviderCancelRequest) -> None:
@@ -177,7 +186,23 @@ async def execute_provider_cancel(request: ProviderCancelRequest) -> None:
 
 
 async def dispatch_provider_cancel_outbox() -> DispatchResult:
-    return await ProviderCancelDispatcher(SessionLocal, execute_provider_cancel).dispatch_once()
+    return await ProviderCancelDispatcher(
+        SessionLocal,
+        execute_provider_cancel,
+        max_attempts=get_settings().outbox_max_attempts,
+    ).dispatch_once()
+
+
+async def dispatch_storage_cleanup_outbox() -> DispatchResult:
+    return await StorageCleanupDispatcher(
+        SessionLocal,
+        storage(),
+        max_attempts=get_settings().outbox_max_attempts,
+    ).dispatch_once()
+
+
+async def reconcile_generation_job(job_id: uuid.UUID) -> object:
+    return await GenerationExecutionService(storage()).execute(job_id)
 
 
 def encode_cursor(created_at: str, item_id: uuid.UUID) -> str:
@@ -195,22 +220,45 @@ def parse_cursor(cursor: str | None) -> tuple[datetime, uuid.UUID] | None:
         raise ApiError(400, "CURSOR_INVALID", "分页游标无效") from exc
 
 
-def owned_project(db: Session, project_id: uuid.UUID, owner_id: uuid.UUID) -> Project:
-    project = db.scalar(
-        select(Project).where(Project.id == project_id, Project.owner_id == owner_id)
-    )
+def owned_project(
+    db: Session,
+    project_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    *,
+    include_deleted: bool = False,
+    for_update: bool = False,
+) -> Project:
+    statement = select(Project).where(Project.id == project_id, Project.owner_id == owner_id)
+    if not include_deleted:
+        statement = statement.where(Project.status == ProjectStatus.ACTIVE)
+    if for_update:
+        statement = statement.with_for_update()
+    project = db.scalar(statement)
     if project is None:
         raise not_found("project")
     return project
 
 
-def owned_shot(db: Session, shot_id: uuid.UUID, owner_id: uuid.UUID) -> Shot:
-    shot = db.scalar(
+def owned_shot(
+    db: Session,
+    shot_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    *,
+    for_update: bool = False,
+) -> Shot:
+    statement = (
         select(Shot)
         .join(Project)
-        .where(Shot.id == shot_id, Project.owner_id == owner_id)
+        .where(
+            Shot.id == shot_id,
+            Project.owner_id == owner_id,
+            Project.status == ProjectStatus.ACTIVE,
+        )
         .options(selectinload(Shot.references))
     )
+    if for_update:
+        statement = statement.with_for_update(of=Project)
+    shot = db.scalar(statement)
     if shot is None:
         raise not_found("shot")
     return shot
@@ -232,7 +280,9 @@ def list_projects(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     cursor: str | None = None,
 ) -> ProjectList:
-    statement = select(Project).where(Project.owner_id == user.id)
+    statement = select(Project).where(
+        Project.owner_id == user.id, Project.status == ProjectStatus.ACTIVE
+    )
     parsed = parse_cursor(cursor)
     if parsed:
         created_at, item_id = parsed
@@ -264,7 +314,7 @@ def get_project(project_id: uuid.UUID, user: CurrentUser, db: Db) -> Project:
 def update_project(
     project_id: uuid.UUID, payload: ProjectUpdate, user: CurrentUser, db: Db
 ) -> Project:
-    project = owned_project(db, project_id, user.id)
+    project = owned_project(db, project_id, user.id, for_update=True)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(project, key, value)
     db.commit()
@@ -274,15 +324,21 @@ def update_project(
 
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: uuid.UUID, user: CurrentUser, db: Db) -> Response:
-    project = owned_project(db, project_id, user.id)
-    db.delete(project)
+    project = owned_project(
+        db,
+        project_id,
+        user.id,
+        include_deleted=True,
+        for_update=True,
+    )
+    request_project_deletion(db, project)
     db.commit()
     return Response(status_code=204)
 
 
 @router.post("/projects/{project_id}/shots", response_model=ShotOut, status_code=201)
 def create_shot(project_id: uuid.UUID, payload: ShotCreate, user: CurrentUser, db: Db) -> Shot:
-    owned_project(db, project_id, user.id)
+    owned_project(db, project_id, user.id, for_update=True)
     shot = Shot(project_id=project_id, **payload.model_dump())
     db.add(shot)
     db.commit()
@@ -311,7 +367,7 @@ def get_shot(shot_id: uuid.UUID, user: CurrentUser, db: Db) -> Shot:
 
 @router.patch("/shots/{shot_id}", response_model=ShotOut)
 def update_shot(shot_id: uuid.UUID, payload: ShotUpdate, user: CurrentUser, db: Db) -> Shot:
-    shot = get_shot(shot_id, user, db)
+    shot = owned_shot(db, shot_id, user.id, for_update=True)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(shot, key, value)
     db.commit()
@@ -326,7 +382,7 @@ def create_shot_reference(
     user: CurrentUser,
     db: Db,
 ) -> ShotReference:
-    shot = owned_shot(db, shot_id, user.id)
+    shot = owned_shot(db, shot_id, user.id, for_update=True)
     asset = db.scalar(
         select(ProjectAsset).where(
             ProjectAsset.id == payload.asset_id,
@@ -360,7 +416,7 @@ def delete_shot_reference(
     user: CurrentUser,
     db: Db,
 ) -> Response:
-    owned_shot(db, shot_id, user.id)
+    owned_shot(db, shot_id, user.id, for_update=True)
     reference = db.scalar(
         select(ShotReference).where(
             ShotReference.id == reference_id, ShotReference.shot_id == shot_id
@@ -379,7 +435,7 @@ async def save_asset(
     user: CurrentUser,
     db: Db,
 ) -> ProjectAsset:
-    owned_project(db, project_id, user.id)
+    owned_project(db, project_id, user.id, for_update=True)
     store = storage()
     mime_type = file.content_type or "application/octet-stream"
     first = await file.read(16)
@@ -518,7 +574,7 @@ def create_generation_quote(
     replay_id = replay_result_id(decision, "generation_quote")
     if replay_id is not None:
         return load_quote(db, replay_id, user.id)
-    shot = owned_shot(db, payload.shot_id, user.id)
+    shot = owned_shot(db, payload.shot_id, user.id, for_update=True)
     quote = create_quote(
         db,
         user,
@@ -627,7 +683,14 @@ def generate(
     if replay_id is not None:
         return load_job(db, replay_id, user.id)
     shot = db.scalar(
-        select(Shot).join(Project).where(Shot.id == payload.shot_id, Project.owner_id == user.id)
+        select(Shot)
+        .join(Project)
+        .where(
+            Shot.id == payload.shot_id,
+            Project.owner_id == user.id,
+            Project.status == ProjectStatus.ACTIVE,
+        )
+        .with_for_update(of=Project)
     )
     if shot is None:
         raise not_found("shot")
@@ -809,9 +872,7 @@ async def cancel_generation(
         return load_job(db, replay_id, user.id)
     job = load_job(db, job_id, user.id)
     db.execute(
-        select(GenerationJob.id)
-        .where(GenerationJob.id == job.id)
-        .with_for_update()
+        select(GenerationJob.id).where(GenerationJob.id == job.id).with_for_update()
     ).scalar_one()
     db.refresh(job, ["status"])
     if job.status in {

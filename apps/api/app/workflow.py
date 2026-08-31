@@ -47,6 +47,8 @@ class WorkflowStarter(Protocol):
         """Return the existing workflow when the idempotency key was already accepted."""
         ...
 
+    def ready(self) -> bool: ...
+
 
 class HatchetWorkflowRunnable(Protocol):
     async def aio_run(
@@ -112,6 +114,9 @@ class HatchetWorkflowStarter:
 
             self._workflow = generation_workflow
         return self._workflow
+
+    def ready(self) -> bool:
+        return callable(getattr(self._get_workflow(), "aio_run", None))
 
     async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
         workflow_input = GenerationWorkflowInput(
