@@ -80,10 +80,30 @@ E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账�
 Local 模式不需要运行 `worker`。可选的 Hatchet Cloud 模式见下节。
 
 Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
-容器环境单独使用 `.env.compose.example`（复制为忽略提交的 `.env.compose`）；
-旧容器入口为显式 `make compose-dev` / `make compose-stop`。不要将它的
-`postgres`、`web` 主机名或 `/data/storage` 路径复制到原生 `.env`。
-Compose/CI 的进一步隔离属于 WINDEV-05，本节不宣称完成整套原生验收计划。
+容器只用于显式集成验证，先按维护文档预检并复用已有资源，再将
+`.env.compose.example` 复制为忽略提交的 `.env.compose`。不要将其中的 `postgres`、
+`web` 主机名或 `/data/storage` 路径复制到原生 `.env`。
+
+```powershell
+docker compose --env-file .env.compose --profile integration config --quiet
+# 首次使用或源码/依赖变化后显式构建；恢复已有容器使用 start
+docker compose --env-file .env.compose --profile integration build
+docker compose --env-file .env.compose --profile integration up -d --wait
+docker compose --env-file .env.compose --profile integration stop
+```
+
+Makefile 提供 `compose-config`、`compose-build`、`compose-up`、`compose-start`、
+`compose-stop` 目标，例如 `make compose-up`；原 `compose-dev` 是 `compose-up` 的兼容别名。
+无 profile 的 Compose 不启动任何服务；显式点名服务仍是集成操作。
+容器不挂载源码、不提供热更新，Web 运行构建后的 Nitro 服务；本地开发继续使用上面的
+PowerShell 命令。未删除已有数据卷，旧 `web-node-modules` 卷不再挂载，也不会自动清理。
+
+CI 分为 `native-checks` 和 `integration`：前者直接运行 uv/pnpm、SQLite、FFmpeg、
+OpenAPI 和 Web 门禁；后者在独立临时 Compose 项目里验证 PostgreSQL 空库迁移、
+三轮并发账本、Hatchet 幂等与构建产物 E2E。原 `test` 状态汇总两组结果，任何一组失败
+都不能通过。CI 清理只针对本次运行创建的卷，不提供本机清库目标。
+实施结果和未执行的远程门禁见
+[WINDEV-05 验证记录](docs/reports/WINDEV-05_Compose隔离与CI验证.md)。
 
 ## 可选 Hatchet Cloud 集成
 

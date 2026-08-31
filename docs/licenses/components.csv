@@ -1,4 +1,5 @@
 name,version_or_commit,source,license,commercial_saas,network_copyleft,region_or_revenue_limits,modified,notice_and_source_obligations,reviewed_at,owner,decision
+uv,0.11.19,https://github.com/astral-sh/uv/tree/0.11.19,MIT OR Apache-2.0,build-tool,no,none,no,"MIT option selected; upstream notice copied to /usr/share/doc/uv/copyright in API image",2026-08-31,platform,build-and-ci-tooling
 Hatchet OSS,v0.101.27,https://github.com/hatchet-dev/hatchet,MIT,allowed,no,none,no,"retain copyright and license notice",2026-08-25,platform,adopt-stage-2
 hatchet-sdk,1.37.2,https://pypi.org/project/hatchet-sdk/,MIT,allowed,no,none,no,"retain copyright and license notice",2026-08-25,platform,adopt-stage-2
 worker-comfyui,5.8.7@a1981e99b1f5a7201f387653420ad1f275b97d0a,https://github.com/runpod-workers/worker-comfyui,AGPL-3.0-only,"requires dedicated review",yes,none,no,"retain notices; provide corresponding source and modification notices when obligations apply",2026-08-26,media,conditional-after-real-poc

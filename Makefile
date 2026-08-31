@@ -1,6 +1,6 @@
 # Optional make aliases. PowerShell 7 is the primary Windows entry point.
 .DEFAULT_GOAL := help
-.PHONY: help dev check migrate api web worker test test-api test-web lint build typecheck generate-client e2e check-baseline compose-dev compose-stop
+.PHONY: help dev check migrate api web worker test test-api test-web lint build typecheck generate-client e2e check-baseline compose-dev compose-up compose-start compose-stop compose-build compose-config
 
 help dev:
 	@echo "Windows: pwsh -NoProfile -File scripts/dev.ps1 check"
@@ -12,9 +12,20 @@ check migrate api web worker test test-api test-web lint build typecheck generat
 check-baseline:
 	uv run --project apps/api --no-sync python scripts/check_repository_baseline.py
 
-# Legacy integration aliases only; Compose/CI restructuring is WINDEV-05.
-compose-dev:
-	docker compose --env-file .env.compose up --build
+# Explicit integration only; no source mounts or hot reload. Native targets never use this.
+COMPOSE = docker compose --env-file .env.compose --profile integration
+
+compose-config:
+	$(COMPOSE) config --quiet
+
+compose-build:
+	$(COMPOSE) build
+
+compose-up compose-dev:
+	$(COMPOSE) up -d --wait
+
+compose-start:
+	$(COMPOSE) start
 
 compose-stop:
-	docker compose --env-file .env.compose stop
+	$(COMPOSE) stop

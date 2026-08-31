@@ -32,6 +32,7 @@
 | `Windows原生开发环境改造计划.md` | 移除日常开发的 WSL/Docker 依赖，保留集成与发布容器边界 |
 | `runbooks/HatchetCloud_Windows集成.md` | 开发租户凭据、TLS、Windows Worker 与远程验收命令 |
 | `reports/WINDEV-04_HatchetCloud集成验证.md` | Cloud 模式离线验证结果及尚未完成的真实云验收 |
+| `reports/WINDEV-05_Compose隔离与CI验证.md` | 原生语言检查与容器集成分离、本机门禁结果和远程验证限制 |
 
 模拟控制面总验收见 `reports/SIM-05_模拟故障注入验收报告.md`；卡住任务、Dead Letter、
 Storage 清理和账本异常的恢复步骤见 `runbooks/模拟控制面故障恢复.md`。

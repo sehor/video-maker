@@ -35,6 +35,9 @@ def test_real_hatchet_duplicate_start_reuses_workflow_run() -> None:
         duplicate = await starter.start(request)
         return first, duplicate
 
-    first, duplicate = asyncio.run(start_complete_and_replay())
+    async def bounded_integration():
+        return await asyncio.wait_for(start_complete_and_replay(), timeout=120)
+
+    first, duplicate = asyncio.run(bounded_integration())
 
     assert duplicate.workflow_id == first.workflow_id

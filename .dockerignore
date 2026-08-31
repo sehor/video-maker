@@ -1,5 +1,13 @@
 .git
 .github
+.env
+.env.*
+**/.env
+**/.env.*
+.codex
+.agents
+data
+**/.uv-cache
 .venv
 **/.venv
 node_modules

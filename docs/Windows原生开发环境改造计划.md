@@ -10,12 +10,14 @@ WINDEV-02 已接入正式 Local Runner、FastAPI lifespan、就绪检查和 Reco
 Worker。WINDEV-03 已实现 Windows 命令入口和环境分离，并在隔离 PostgreSQL
 库验证迁移、API/Web 与 E2E；用户授权后，本机 `video-maker` 开发库的迁移、
 API/Web 启动与就绪验证也已完成。WINDEV-04 已实现 Cloud TLS 配置、Windows Worker
-信号适配与显式远程测试入口；真实 Cloud 验收待开发租户 Token。WINDEV-05～06 的
-CI 分离和 WSL 关闭状态总验收尚未完成，不能由离线验证替代。
+信号适配与显式远程测试入口；真实 Cloud 验收待开发租户 Token。WINDEV-05 已实现
+Compose 显式隔离、构建产物启动和 CI 门禁分组，并通过本机相关门禁；远程 CI 与
+WINDEV-06 的 WSL 关闭状态总验收仍不能由离线验证替代。
 具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
 和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)，以及
 [WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)和
-[WINDEV-04 验证记录](reports/WINDEV-04_HatchetCloud集成验证.md)。
+[WINDEV-04 验证记录](reports/WINDEV-04_HatchetCloud集成验证.md)，以及
+[WINDEV-05 验证记录](reports/WINDEV-05_Compose隔离与CI验证.md)。
 
 ## 1. 目标
 
@@ -284,6 +286,8 @@ Playwright 浏览器是 Windows 一次性开发依赖；普通测试不得每次
 验收：Windows API 能提交一次稳定幂等工作流，Windows Worker 能消费并完成；重复提交复用同一运行。
 
 ### WINDEV-05：Compose 隔离与 CI 调整
+
+状态：实现与本机门禁验证完成；Docker 构建与远程 CI 尚未执行。
 
 依赖：WINDEV-03；可与 WINDEV-04 独立实施。
 
