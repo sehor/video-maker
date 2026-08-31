@@ -6,7 +6,8 @@
 开发环境正在按 [Windows 原生开发环境改造计划](Windows原生开发环境改造计划.md)
 迁移。WINDEV-01/02 已加入工作流 Backend 选择、生产保护和随 API 生命周期
 运行的开发专用 Local Runner，业务执行与账本语义不变；现有集成栈显式使用
-`WORKFLOW_BACKEND=hatchet`。本机命令入口和完整环境验收仍由后续工作项完成。
+`WORKFLOW_BACKEND=hatchet`。WINDEV-03 已提供 `scripts/dev.ps1` 原生命令并通过
+隔离库迁移和浏览器闭环验证；开发库迁移待明确授权，完整环境总验收仍未完成。
 
 ## 1. 交付范围
 

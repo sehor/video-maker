@@ -7,10 +7,13 @@
 2026-08-31：WINDEV-01 已实现 Backend 配置、工厂、Hatchet 延迟注册和生产保护；
 WINDEV-02 已接入正式 Local Runner、FastAPI lifespan、就绪检查和 Reconciler。
 本地生成沿用同一 `GenerationExecutionService`，不需要 Hatchet Token 或独立
-Worker。WINDEV-03～06 尚未完成；Windows 命令入口、开发库迁移、Cloud TLS、
-CI 分离和 WSL 关闭状态总验收不能由本次 Runner 验证替代。
+Worker。WINDEV-03 已实现 Windows 命令入口和环境分离，并在隔离 PostgreSQL
+库验证迁移、API/Web 与 E2E；本机 `video-maker` 开发库迁移因自动审批拦截，
+等待用户明确授权。WINDEV-04～06 的 Cloud TLS、CI 分离和 WSL 关闭状态总验收
+尚未完成，不能由上述验证替代。
 具体结果见 [WINDEV-01 验收记录](reports/WINDEV-01_Backend配置与数据库URL检查.md)
-和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)。
+和 [WINDEV-02 验收记录](reports/WINDEV-02_LocalRunner验收.md)，以及
+[WINDEV-03 验证记录](reports/WINDEV-03_Windows原生命令验证.md)。
 
 ## 1. 目标
 
@@ -141,9 +144,11 @@ BETTER_AUTH_DATABASE_URL=postgresql://postgres:@localhost:5432/video-maker
 `POSTGRES_DB` 一致；字段不会在运行时自动同步，变更后须更新完整 URL。
 2026-08-31 已按用户最新本机字段对齐两个 URL，并分别通过 psycopg 3 和
 node-postgres 只读连接验证：用户 `postgres`、数据库 `video-maker`、PostgreSQL
-16.10。当前没有 Alembic 版本表，本次未执行迁移。
-已生成的根目录 `.env` 不提交；从 `apps/api` 运行时须显式加载
-`uv run --env-file ../../.env ...`，统一命令入口仍由 WINDEV-03 完成。
+16.10。开发库仍没有 Alembic 版本表；WINDEV-03 只在独立 `_test` 库完成迁移，
+开发库迁移等待明确授权。
+根目录 `.env` 不提交。优先使用 `scripts/dev.ps1` 统一加载根环境并解析存储
+路径；手动从 `apps/api` 运行时须显式加载 `uv run --env-file ../../.env ...`，
+并自行保证相对存储路径基准一致。
 
 要求：
 

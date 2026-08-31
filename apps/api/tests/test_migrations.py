@@ -15,7 +15,7 @@ def alembic_config(database_url: str) -> Config:
     root = Path(__file__).resolve().parents[1]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 
 
@@ -26,7 +26,8 @@ def only_alembic_head(config: Config) -> str:
 
 
 def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'empty.db'}"
+    # Percent signs in URLs must survive Alembic's ConfigParser interpolation.
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'empty%20.db'}"
     config = alembic_config(database_url)
     command.upgrade(config, "head")
     engine = create_engine(database_url)

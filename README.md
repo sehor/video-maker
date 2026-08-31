@@ -1,17 +1,90 @@
 # AI 视频镜头工厂
 
-仓库使用 pnpm 9.12.3 和根目录唯一的 `pnpm-lock.yaml`。常用前端命令：
+## Windows 原生开发
 
-```bash
+日常开发不需要 WSL、Docker、Hatchet Token 或独立 Worker。默认使用随 API
+运行的 Local Runner，仅适用于开发；生产仍使用 Hatchet。原生入口不会安装、
+启动或重启 PostgreSQL，也不会安装浏览器。
+
+前置条件：PowerShell 7、Python 3.12+、uv、Node 22+、pnpm 9.12.3、已运行的
+Windows PostgreSQL，以及 PATH 中的 FFmpeg/ffprobe。前端只使用根目录的
+`pnpm-lock.yaml`。首次准备依赖：
+
+```powershell
+uv sync --project apps/api --extra dev
 pnpm install --frozen-lockfile
-pnpm test
-pnpm lint
-pnpm typecheck
-pnpm build
-pnpm test:e2e
+# E2E 一次性前置安装，普通 e2e 命令不会下载浏览器
+pnpm --filter @video-factory/web exec playwright install chromium
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Python API 依赖与命令由 uv 管理；Compose 工作流可通过 Makefile 的同名目标执行。
+编辑根目录 `.env`，保留你本机实际账号和密码。API URL 必须以
+`postgresql+psycopg://` 开头；Better Auth 使用 `postgresql://`。二者的用户名、
+密码、主机、端口和数据库须一致，并与 `POSTGRES_*` 一致。空密码写作
+`postgres:@localhost`；用户名和密码的特殊字符需 URL 编码，例如 `@` 写成 `%40`。
+`POSTGRES_*` 不会自动补进 URL。密钥和本机 `.env` 不提交。
+
+```powershell
+./scripts/dev.ps1 check
+# 首次 check 报告缺少迁移属于预期；确认显示的数据库目标后运行
+./scripts/dev.ps1 migrate
+./scripts/dev.ps1 check
+```
+
+`check` 只检查依赖、URL、两个数据库客户端的连接、Alembic head 和 Auth 表，
+不修改数据库。`migrate` 先做相同连接检查，再执行 Alembic 和 Better Auth
+迁移；不会清库。包含未知表的无版本库、会删除旧表的阶段一升级会被拒绝，
+需要先人工检查和备份。两个迁移工具各自提交事务，不提供跨工具的原子迁移；
+修复失败原因后可重跑。
+
+在两个终端分别启动，使用 Ctrl+C 结束各自进程：
+
+```powershell
+# 终端一
+./scripts/dev.ps1 api
+# 终端二
+./scripts/dev.ps1 web
+```
+
+访问 <http://localhost:3000>；API 健康检查为 <http://localhost:8000/healthz>，
+就绪检查为 <http://localhost:8000/readyz>。`AUTH_JWKS_URL` 指向
+`http://localhost:3000/api/auth/jwks`。Web 需启动，才能完成注册、登录和 JWT 认证。
+
+所有原生命令统一从根 `.env` 读取配置，显式进程环境变量优先。环境文件按
+dotenv 解析，不执行 PowerShell，不展开 `${...}`；密码中的 `$` 保持原样。
+`STORAGE_ROOT=./data/storage` 始终相对仓库根解析，与调用目录无关。
+可用 `-EnvFile <路径>` 指定另一份本机配置；相对配置路径也以仓库根为基准。
+
+## 测试与检查
+
+先用已有 PostgreSQL 管理工具建立独立测试库，例如 `video-maker_test`，然后
+在 `.env` 填写完整的 `TEST_DATABASE_URL`。脚本不自动创建数据库；测试库名
+必须以 `_test` 结尾，且不能等于开发库名。**API 测试会重建测试库业务表**，
+不要与另一个测试进程共享该库。迁移测试内部的 SQLite 库位于临时目录。
+每次原生 API 测试的缓存与临时文件位于忽略提交的
+`apps/api/.test-tmp-native/run-*`，不会复用系统中旧的 pytest 临时目录。
+
+```powershell
+./scripts/dev.ps1 test         # PostgreSQL API 回归 + Web 单元测试
+./scripts/dev.ps1 test-api     # 只跑 API；后面可追加 pytest 文件或 -k 参数
+./scripts/dev.ps1 test-web
+./scripts/dev.ps1 lint
+./scripts/dev.ps1 typecheck
+./scripts/dev.ps1 build
+./scripts/dev.ps1 generate-client
+./scripts/dev.ps1 e2e          # 先启动 api/web；使用已安装的 Chromium
+```
+
+E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账号、项目与镜头，
+不会清理已有用户数据。没有浏览器时按上文安装一次；普通 E2E 不启动 Compose。
+`worker` 命令仅接受 `WORKFLOW_BACKEND=hatchet`，Cloud 配置与集成验收由
+WINDEV-04 完成，Local 模式不需要运行它。
+
+Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
+容器环境单独使用 `.env.compose.example`（复制为忽略提交的 `.env.compose`）；
+旧容器入口为显式 `make compose-dev` / `make compose-stop`。不要将它的
+`postgres`、`web` 主机名或 `/data/storage` 路径复制到原生 `.env`。
+Compose/CI 的进一步隔离属于 WINDEV-05，本节不宣称完成整套原生验收计划。
 
 ## SIM-05 模拟验收状态
 
@@ -25,11 +98,3 @@ Finalize、Ledger、Project、Storage、Dead Letter 和 Readiness 的故障矩�
 
 - [SIM-05 模拟故障注入验收报告](docs/reports/SIM-05_模拟故障注入验收报告.md)
 - [模拟控制面故障恢复 Runbook](docs/runbooks/模拟控制面故障恢复.md)
-
-本地 API 验证命令：
-
-```bash
-cd apps/api
-uv run --extra dev pytest -q -m "not integration"
-uv run --extra dev ruff check app tests
-```

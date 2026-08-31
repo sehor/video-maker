@@ -37,6 +37,9 @@ Storage 清理和账本异常的恢复步骤见 `runbooks/模拟控制面故障�
 Windows 本地工作流的生命周期、去重、恢复边界和回归结果见
 `reports/WINDEV-02_LocalRunner验收.md`。
 
+Windows 原生命令、环境加载、数据库预检和隔离库启动验证见
+`reports/WINDEV-03_Windows原生命令验证.md`；本机开发库迁移待明确授权。
+
 架构决策记录位于 `docs/adr/`，依赖、模型和 custom node 的许可证台账位于
 `docs/licenses/`。新增或升级社区组件时必须同时更新对应 ADR 和台账。
 

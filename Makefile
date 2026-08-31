@@ -1,35 +1,20 @@
-.PHONY: dev stop migrate test lint build typecheck generate-client e2e check-baseline
+# Optional make aliases. PowerShell 7 is the primary Windows entry point.
+.DEFAULT_GOAL := help
+.PHONY: help dev check migrate api web worker test test-api test-web lint build typecheck generate-client e2e check-baseline compose-dev compose-stop
 
-dev:
-	docker compose up --build
+help dev:
+	@echo "Windows: pwsh -NoProfile -File scripts/dev.ps1 check"
+	@echo "Run scripts/dev.ps1 api and scripts/dev.ps1 web in separate terminals. Ctrl+C stops each."
 
-stop:
-	docker compose down
-
-migrate:
-	docker compose run --rm api alembic upgrade head
-	docker compose run --rm web pnpm run auth:migrate
-
-test:
-	docker compose run --rm api pytest -q
-	docker compose run --rm web pnpm run test
-
-lint:
-	docker compose run --rm api ruff check app tests
-	docker compose run --rm web pnpm run lint
-
-build:
-	docker compose run --rm web pnpm run build
-
-typecheck:
-	docker compose run --rm web pnpm exec vue-tsc --noEmit
-
-generate-client:
-	docker compose run --rm api python scripts/export_openapi.py
-	docker compose run --rm web pnpm run generate:client
-
-e2e:
-	docker compose run --rm web pnpm run test:e2e
+check migrate api web worker test test-api test-web lint build typecheck generate-client e2e:
+	pwsh -NoProfile -File scripts/dev.ps1 $@
 
 check-baseline:
-	python3 scripts/check_repository_baseline.py
+	uv run --project apps/api --no-sync python scripts/check_repository_baseline.py
+
+# Legacy integration aliases only; Compose/CI restructuring is WINDEV-05.
+compose-dev:
+	docker compose --env-file .env.compose up --build
+
+compose-stop:
+	docker compose --env-file .env.compose stop
