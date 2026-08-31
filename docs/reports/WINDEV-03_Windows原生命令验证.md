@@ -2,7 +2,8 @@
 
 日期：2026-08-31。分支：`codex/windows-native-development`。起始提交：`244cb23`。
 
-状态：代码与隔离库验证通过；本机开发库迁移待用户明确授权。
+状态：WINDEV-03 已完成。代码、隔离库验证及用户授权后的开发库迁移/启动验证通过。
+原生命令实现提交：`9bf6085`。
 
 ## 修改范围
 
@@ -48,18 +49,35 @@ FFmpeg/ffprobe 8.0.1。未调用 WSL 或 Docker，也未安装依赖或浏览器
 - `video-maker_windev03_test`：空库迁移与 API 定向测试，业务表允许测试重建。
 - `video-maker_windev03_e2e_test`：独立迁移及 API/Web/E2E，存储目录名含空格。
   浏览器生成的账号、项目、镜头和 Mock 产物仅保留在此隔离环境。
-- `video-maker`：只读连接验证；实际开发库的迁移命令被自动审批拦截，未执行。
+- `video-maker`：首轮只读连接验证；用户授权继续后已完成迁移及原生启动验证，
+  未在开发库运行会重建业务表的 API 测试。
 
 本机忽略提交的 `.env` 只修正了剩余容器默认值（JWKS、存储路径），并配置
 独立测试库 URL。原有开发数据库用户名、密码及两个已连通 URL 均保持不变。
 临时环境文件、日志、媒体和缓存不纳入提交。
 
-## 剩余事项与限制
+## 开发库补充验收
 
-自动审批将此前“不迁移开发库”的任务边界继续适用于本次开发库迁移，拒绝了
-`scripts/dev.ps1 migrate`。需要用户明确授权后，才对 `video-maker` 执行迁移；
-不能把隔离库验证表述为用户日常开发库已经可用。迁移会新增业务/Auth 表，
-不清空数据库；脚本仍会在发现未知表或破坏性旧版本时拒绝继续。
+首轮开发库迁移曾被自动审批拦截。用户在明确迁移对象与“不清库”的边界后，
+要求“继续余下的”，本次据此完成剩余操作，没有绕过迁移安全检查。
+
+2026-08-31，直接使用根 `.env`，未覆盖开发数据库凭据：
+
+| 检查 | 实际结果 |
+|---|---|
+| 迁移前只读预检 | 目标 `localhost:5432/video-maker`，PostgreSQL 16.10，public 无表、无 Alembic 版本，安全检查通过 |
+| `scripts/dev.ps1 migrate` | 成功；Alembic 到 `0011_control_plane_recovery`，Better Auth 五张表创建成功 |
+| `scripts/dev.ps1 check` | 成功；psycopg 3 与 node-postgres 均连接开发库，迁移和 Auth 表检查通过 |
+| `scripts/dev.ps1 api` / `web` | 使用根 `.env` 的原生 API 与 Nuxt/Better Auth 启动成功 |
+| API `/healthz`、`/readyz` | HTTP 200；database、migrations、storage、workflow 四项均为 true |
+| Web `/login`、`/api/auth/get-session` | HTTP 200；匿名会话返回 null |
+| 停止验证进程后 | 8000、3000 端口均不再监听 |
+
+开发库没有已有业务表需要保留或清理；本次未创建测试账号、项目或生成任务，
+没有运行测试表重建、清库或数据删除操作。此前隔离库的 E2E 结果仍保持其
+原有范围，不表述为本次在开发库重新运行了 E2E。
+
+## 剩余事项与限制
 
 本次没有重跑完整 API 全量测试，使用与改动相关的定向回归；WINDEV-02 的
 218 项通过记录不冒充本次结果。E2E 沿用现有的 SUCCEEDED、视频元素可见等
