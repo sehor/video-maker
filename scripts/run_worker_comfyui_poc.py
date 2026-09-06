@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.error
@@ -363,59 +362,32 @@ class RunPodClient:
         self._request("POST", f"cancel/{require_id('provider job id', job_id)}", {})
 
 
-def validate_media(path: Path, aspect_ratio: str) -> dict[str, Any]:
+def validate_media(path: Path, aspect_ratio: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Check declarations and file size only; generation stays on the rented worker."""
     expected = (1280, 720) if aspect_ratio == "16:9" else (720, 1280)
     size_bytes = path.stat().st_size
-    if not 0 < size_bytes <= MAX_MEDIA_BYTES:
-        raise PocError("POC output exceeds the fixed media size policy")
-    probe = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=format_name,duration:stream=codec_name,pix_fmt,width,height",
-            "-of",
-            "json",
-            str(path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if probe.returncode != 0:
-        raise PocError("ffprobe rejected the POC output")
-    facts = json.loads(probe.stdout)
-    streams = [item for item in facts.get("streams", []) if item.get("codec_name")]
-    if len(streams) != 1:
-        raise PocError("POC output must contain one video stream")
-    stream = streams[0]
-    if (
-        "mp4" not in facts.get("format", {}).get("format_name", "").split(",")
-        or stream.get("codec_name") != "h264"
-        or stream.get("pix_fmt") != "yuv420p"
-        or (stream.get("width"), stream.get("height")) != expected
-    ):
-        raise PocError("POC output violates the fixed 720p media policy")
-    duration = float(facts.get("format", {}).get("duration", 0))
-    if not 4.5 <= duration <= 5.5:
+    if not 0 < size_bytes <= MAX_MEDIA_BYTES or size_bytes != metadata.get("size_bytes"):
+        raise PocError("POC output size does not match its metadata")
+    if (metadata.get("media_type") != "video/mp4"
+            or metadata.get("codec") != "h264"
+            or type(metadata.get("width")) is not int
+            or type(metadata.get("height")) is not int
+            or (metadata["width"], metadata["height"]) != expected):
+        raise PocError("POC output violates the fixed 720p metadata policy")
+    duration = metadata.get("duration_ms")
+    fps = metadata.get("fps")
+    if type(duration) is not int or not 4750 <= duration <= 5250:
         raise PocError("POC output duration is outside the five-second tolerance")
-    decode = subprocess.run(
-        ["ffmpeg", "-v", "error", "-xerror", "-i", str(path), "-f", "null", "-"],
-        check=False,
-        capture_output=True,
-        timeout=120,
-    )
-    if decode.returncode != 0:
-        raise PocError("FFmpeg full decode rejected the POC output")
+    if type(fps) not in {int, float} or not 0 < fps <= 240:
+        raise PocError("POC output frame rate is invalid")
     return {
+        "validation_method": "provider_metadata",
         "container": "mp4",
-        "codec": "h264",
-        "pix_fmt": "yuv420p",
-        "duration_seconds": duration,
-        "width": expected[0],
-        "height": expected[1],
+        "codec": metadata["codec"],
+        "duration_seconds": duration / 1000,
+        "width": metadata["width"],
+        "height": metadata["height"],
+        "fps": fps,
     }
 
 
@@ -498,7 +470,7 @@ def run_paid_poc(
     client: ProviderClient | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
-    media_validator: Callable[[Path, str], dict[str, Any]] = validate_media,
+    media_validator: Callable[[Path, str, dict[str, Any]], dict[str, Any]] = validate_media,
 ) -> dict[str, Any]:
     provider = client or RunPodClient(config.api_key, config.endpoint_id)
     evidence = new_evidence(config)
@@ -582,7 +554,7 @@ def run_paid_poc(
                 raise PocError(
                     "claim collector output escaped the private media directory"
                 )
-            run["media_validation"] = media_validator(media_path, aspect)
+            run["media_validation"] = media_validator(media_path, aspect, output["output"])
             run["status"] = "VALIDATED"
             atomic_write_json(evidence_path, evidence)
         evidence["status"] = "SUCCEEDED"

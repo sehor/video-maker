@@ -37,6 +37,15 @@ class WorkerComfyUIPocTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 self.assertIsNone(re.fullmatch(pattern, invalid))
 
+    def test_response_requires_actual_media_metadata(self) -> None:
+        base = fixture("response-success.json")
+        workflow_hash = base["versions"]["workflow_sha256"]
+        for field in ("duration_ms", "width", "height", "fps", "codec"):
+            with self.subTest(field=field), self.assertRaises(worker_contract.ContractError):
+                candidate = copy.deepcopy(base)
+                candidate["output"].pop(field)
+                worker_contract.validate_response(candidate, workflow_hash)
+
 
     def test_request_rejects_every_unapproved_execution_surface(self) -> None:
         base = fixture("request-16x9.json")

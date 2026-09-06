@@ -214,6 +214,10 @@ def test_poll_maps_success_with_provenance_timings_and_artifact() -> None:
     assert result.output is not None
     assert result.output.content is None
     assert result.output.object_key == f"outputs/{ATTEMPT_ID}.mp4"
+    assert (result.output.duration_ms, result.output.width, result.output.height) == (
+        5000, 1280, 720,
+    )
+    assert (result.output.fps, result.output.codec) == (16, "h264")
     assert result.output.metrics is not None
     assert result.output.metrics.gpu_type == "fixture-gpu"
     assert result.output.metrics.cost_source == CostSource.ESTIMATE
@@ -221,6 +225,23 @@ def test_poll_maps_success_with_provenance_timings_and_artifact() -> None:
     assert result.output.versions.image_digest == IMAGE_DIGEST
     assert result.output.versions.workflow_sha256 == WORKFLOW_SHA256
     assert dict(result.output.versions.model_sha256) == {"fixture-model": MODEL_SHA256}
+
+
+@pytest.mark.parametrize("field", ["duration_ms", "width", "height", "fps", "codec"])
+def test_poll_rejects_legacy_response_missing_media_metadata(field) -> None:
+    worker_output = load_fixture("response-success.json")
+    worker_output["output"].pop(field)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "id": "runpod-job-1", "status": "COMPLETED", "output": worker_output,
+        })
+
+    provider, client = provider_with_handler(httpx.MockTransport(handler))
+    result = asyncio.run(provider.poll(attempt()))
+    asyncio.run(client.aclose())
+    assert result.status == ProviderStatus.FAILED
+    assert result.failure.code == FailureCode.POLICY_REJECTED
 
 
 def test_poll_rejects_attempt_or_release_provenance_mismatch() -> None:

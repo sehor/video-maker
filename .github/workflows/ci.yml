@@ -38,8 +38,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm install --frozen-lockfile
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          choco install ffmpeg --no-progress -y
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm --filter @video-factory/web exec playwright install chromium
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Start disposable Windows PostgreSQL on the CI runner

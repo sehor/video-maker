@@ -75,6 +75,12 @@ class RemoteArtifactReceiver:
         if not isinstance(sha256, str) or SHA256_PATTERN.fullmatch(sha256) is None:
             self._reject(FailureCode.OUTPUT_CORRUPTED, "Provider 输出 SHA-256 声明无效")
 
+        # Reject invalid declarations before any object download or publication.
+        try:
+            facts = self._media_validator.validate(output, policy)
+        except MediaValidationError as exc:
+            raise ArtifactReceiptError(ProviderFailure(exc.failure_code, exc.message)) from exc
+
         try:
             stat = self._storage.stat(object_key)
         except (ApiError, OSError) as exc:
@@ -92,7 +98,6 @@ class RemoteArtifactReceiver:
             with tempfile.TemporaryDirectory(prefix="video-maker-artifact-") as isolated:
                 candidate = Path(isolated) / "candidate.mp4"
                 self._download_verified(object_key, candidate, size_bytes, sha256)
-                facts = self._media_validator.validate(candidate, policy)
                 claim = self._storage.write_claim(
                     f"outputs/{job_id}",
                     mime_type="video/mp4",
@@ -102,10 +107,6 @@ class RemoteArtifactReceiver:
                     stored = self._storage.put(claim, source, "video/mp4")
         except ArtifactReceiptError:
             raise
-        except MediaValidationError as exc:
-            raise ArtifactReceiptError(
-                ProviderFailure(exc.failure_code, exc.message)
-            ) from exc
         except (ApiError, OSError) as exc:
             raise ArtifactReceiptError(
                 ProviderFailure(FailureCode.OUTPUT_CORRUPTED, "Provider 输出接收失败")

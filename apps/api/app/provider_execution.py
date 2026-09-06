@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.artifacts import RemoteArtifactReceiver
 from app.config import get_settings
 from app.db import SessionLocal
-from app.media import MediaValidator, create_media_validator
+from app.media import MediaValidator
 from app.models import AttemptStatus
 from app.provider import (
     FailureCode,
@@ -89,7 +89,7 @@ class GenerationExecutionService(
         self._clock = clock or (lambda: datetime.now(UTC))
         self._artifact_receiver = RemoteArtifactReceiver(
             storage,
-            media_validator or create_media_validator(get_settings()),
+            media_validator or MediaValidator(),
             max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
         )
 

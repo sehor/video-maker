@@ -7,7 +7,7 @@
 启动或重启 PostgreSQL，也不会安装浏览器。
 
 前置条件：PowerShell 7、Python 3.12+、uv、Node 22+、pnpm 9.12.3、已运行的
-Windows PostgreSQL，以及 PATH 中的 FFmpeg/ffprobe。前端只使用根目录的
+Windows PostgreSQL。控制面与自动测试不需要 FFmpeg/ffprobe。前端只使用根目录的
 `pnpm-lock.yaml`。首次准备依赖：
 
 ```powershell
@@ -67,7 +67,7 @@ dotenv 解析，不执行 PowerShell，不展开 `${...}`；密码中的 `$` 保
 pnpm test                     # 全部 Python（含仓库脚本）+ Web 单元测试
 pnpm test:unit                # 快速逻辑测试，不访问数据库、不解码媒体
 pnpm test:db                  # PostgreSQL 迁移、约束、业务和并发
-pnpm test:media               # 真实 FFmpeg/ffprobe 和媒体集成
+pnpm test:media               # 轻量元数据校验和结果接收集成
 pnpm test:e2e                 # 独立 schema、临时端口、自动管理原生 API/Web
 pnpm test:all                 # 包含 E2E 的完整测试
 ./scripts/dev.ps1 test-api     # Python 测试兼容入口；可追加 -k 或文件

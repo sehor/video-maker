@@ -1,9 +1,6 @@
 import asyncio
-import shutil
-import subprocess
 import uuid
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,8 +35,6 @@ from app.simulators import SimulatedRunPodMetrics, SimulatedRunPodProvenance
 from app.storage import LocalObjectStorage, ObjectStorage
 from tests.test_projects_permissions import create_project
 
-MEDIA_FIXTURES = Path(__file__).parent / "fixtures" / "media"
-
 
 class ArtifactProvider:
     def __init__(
@@ -50,12 +45,14 @@ class ArtifactProvider:
         object_key: str | None = None,
         size_bytes: int | None = None,
         sha256: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         self._storage = storage
         self._content = content
         self._object_key = object_key
         self._size_bytes = size_bytes
         self._sha256 = sha256
+        self._metadata = metadata or {}
         self._requests: dict[uuid.UUID, SubmitRequest] = {}
         self._outputs: dict[uuid.UUID, ProviderOutput] = {}
         self._provenance = SimulatedRunPodProvenance()
@@ -90,6 +87,11 @@ class ArtifactProvider:
                 ),
                 sha256=self._sha256 or stored.sha256,
             )
+            width, height = (1280, 720) if request.aspect_ratio == "16:9" else (720, 1280)
+            output = replace(output, **{
+                "duration_ms": request.duration_ms, "width": width, "height": height,
+                "fps": 16, "codec": "h264", **self._metadata,
+            })
             self._outputs[attempt.attempt_id] = output
         return PollResult(
             ProviderStatus.SUCCEEDED,
@@ -178,6 +180,7 @@ def _execute(
     object_key: str | None = None,
     size_bytes: int | None = None,
     sha256: str | None = None,
+    metadata: dict | None = None,
 ) -> tuple[uuid.UUID, ArtifactProvider, GenerationExecutionService]:
     job_id = _create_job(raw_client, aspect_ratio=aspect_ratio)
     storage = _storage()
@@ -187,6 +190,7 @@ def _execute(
         object_key=object_key,
         size_bytes=size_bytes,
         sha256=sha256,
+        metadata=metadata,
     )
     executor = GenerationExecutionService(storage, provider=provider)
     completed = asyncio.run(executor.execute(job_id))
@@ -194,47 +198,12 @@ def _execute(
     return job_id, provider, executor
 
 
-def _portrait_fixture(path: Path) -> bytes:
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        pytest.fail("FFmpeg is required for media tests; install the Windows binary")
-    subprocess.run(
-        [
-            ffmpeg,
-            "-nostdin",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=black:s=720x1280:r=1:d=5",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-y",
-            str(path),
-        ],
-        check=True,
-        timeout=30,
-        shell=False,
-    )
-    return path.read_bytes()
-
-
 @pytest.mark.parametrize("aspect_ratio", ["16:9", "9:16"])
 def test_valid_remote_artifact_publishes_and_settles_once(
     raw_client: TestClient,
-    tmp_path: Path,
     aspect_ratio: str,
 ) -> None:
-    content = (
-        (MEDIA_FIXTURES / "valid-720p-h264.mp4").read_bytes()
-        if aspect_ratio == "16:9"
-        else _portrait_fixture(tmp_path / "portrait.mp4")
-    )
+    content = b"opaque-provider-video"
     job_id, provider, executor = _execute(
         raw_client,
         content,
@@ -282,28 +251,29 @@ def test_valid_remote_artifact_publishes_and_settles_once(
 
 
 @pytest.mark.parametrize(
-    ("fixture", "size_bytes", "sha256", "expected_failure"),
+    ("metadata", "size_bytes", "sha256", "expected_failure"),
     [
-        ("corrupt-decode.mp4", None, None, "OUTPUT_CORRUPTED"),
-        ("wrong-resolution.mp4", None, None, "OUTPUT_INVALID_MEDIA"),
-        ("wrong-codec.mp4", None, None, "OUTPUT_INVALID_MEDIA"),
-        ("valid-720p-h264.mp4", 1, None, "OUTPUT_CORRUPTED"),
-        ("valid-720p-h264.mp4", None, "0" * 64, "OUTPUT_CORRUPTED"),
+        ({"duration_ms": None}, None, None, "OUTPUT_INVALID_MEDIA"),
+        ({"width": 1920}, None, None, "OUTPUT_INVALID_MEDIA"),
+        ({"codec": "vp9"}, None, None, "OUTPUT_INVALID_MEDIA"),
+        ({}, 1, None, "OUTPUT_CORRUPTED"),
+        ({}, None, "0" * 64, "OUTPUT_CORRUPTED"),
     ],
 )
 def test_invalid_remote_artifact_fails_refunds_and_never_publishes(
     raw_client: TestClient,
-    fixture: str,
+    metadata: dict,
     size_bytes: int | None,
     sha256: str | None,
     expected_failure: str,
 ) -> None:
-    content = (MEDIA_FIXTURES / fixture).read_bytes()
+    content = b"opaque-provider-video"
     job_id, _, executor = _execute(
         raw_client,
         content,
         size_bytes=size_bytes,
         sha256=sha256,
+        metadata=metadata,
     )
     assert asyncio.run(executor.execute(job_id)).is_complete
 
@@ -331,7 +301,7 @@ def test_invalid_remote_artifact_fails_refunds_and_never_publishes(
 def test_uncontrolled_object_key_is_rejected_before_download(
     raw_client: TestClient,
 ) -> None:
-    content = (MEDIA_FIXTURES / "valid-720p-h264.mp4").read_bytes()
+    content = b"opaque-provider-video"
     job_id, _, _ = _execute(
         raw_client,
         content,

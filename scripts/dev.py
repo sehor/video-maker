@@ -168,8 +168,6 @@ def check_tools(env: dict[str, str]) -> None:
     print(f"Python {sys.version.split()[0]}")
     for tool, args in (
         ("uv", ["--version"]), ("node", ["--version"]), ("pnpm", ["--version"]),
-        (env.get("FFMPEG_BINARY", "ffmpeg"), ["-version"]),
-        (env.get("FFPROBE_BINARY", "ffprobe"), ["-version"]),
     ):
         version = run([tool, *args], env, capture=True).splitlines()[0]
         print(f"{Path(tool).name}: {version}")

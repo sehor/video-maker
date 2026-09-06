@@ -69,6 +69,12 @@ def test_container_process_is_blocked_before_launch(command):
         subprocess.Popen(command)
 
 
+@pytest.mark.parametrize("binary", ["ffmpeg", "ffprobe", "ffmpeg.exe", "ffprobe.exe"])
+def test_media_process_is_blocked_before_launch(binary):
+    with pytest.raises(AssertionError, match="Media processes must not run"):
+        subprocess.Popen([binary, "-version"])
+
+
 def test_remote_socket_is_blocked_before_connection():
     with socket.socket() as connection, pytest.raises(AssertionError, match="fake transport"):
         connection.connect(("203.0.113.1", 443))

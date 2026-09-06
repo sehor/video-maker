@@ -6,10 +6,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY docs/licenses/uv-MIT.txt /usr/share/doc/uv/copyright
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY apps/api/pyproject.toml apps/api/uv.lock ./
 RUN uv sync --locked --extra dev --no-install-project
 COPY apps/api .

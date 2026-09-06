@@ -107,10 +107,19 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
         require_exact_fields(
             output,
             frozenset(
-                {"claim", "object_key", "media_type", "size_bytes", "sha256"}
+                {"claim", "object_key", "media_type", "size_bytes", "sha256",
+                 "duration_ms", "width", "height", "fps", "codec"}
             ),
             "output",
         )
+        for field in ("duration_ms", "width", "height"):
+            require_nonnegative_int(output[field], f"output.{field}")
+            if output[field] == 0:
+                raise ContractError(f"output.{field} must be positive")
+        if type(output["fps"]) not in {int, float} or not 0 < output["fps"] <= 240:
+            raise ContractError("output.fps is invalid")
+        if not isinstance(output["codec"], str) or not 1 <= len(output["codec"]) <= 32:
+            raise ContractError("output.codec is invalid")
         require_claim(output["claim"], "output.claim")
         object_key = output["object_key"]
         if (

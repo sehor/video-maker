@@ -38,6 +38,8 @@ def external_operations(monkeypatch, request):
         command = args if isinstance(args, str) else " ".join(map(str, args))
         if re.search(r"(?i)(?<![\w-])(?:wsl(?:\.exe)?|docker(?:\.exe)?)(?![\w-])", command):
             raise AssertionError("External container operations must be simulated in tests")
+        if re.search(r"(?i)(?<![\w-])(?:ffmpeg|ffprobe)(?:\.exe)?(?![\w-])", command):
+            raise AssertionError("Media processes must not run in automated tests")
         return original_popen(args, *positional, **kwargs)
 
     def guarded_connect(sock, address):

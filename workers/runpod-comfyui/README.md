@@ -125,3 +125,7 @@ The committed `benchmark-smoke.json` passes only the fixed no-cost fixtures. The
 not a releasable image. `THIRD_PARTY_NOTICES.md` records the currently known runtime and
 build-only notices. Until #14's real POC supplies verified model hashes, image digest and GPU
 evidence, preflight must remain blocked and the route must remain disabled.
+
+## 响应元数据契约 v2（2026-09-06）
+
+成功输出必须提供 `duration_ms`、`width`、`height`、`fps`、`codec`，与对象大小/校验和一起返回实际产物信息。控制面只做轻量元数据和对象完整性校验，不执行 FFmpeg/ffprobe。缺少元数据的旧响应会拒绝，Worker 接入时须同步实现；不要用请求参数伪造结果。第三方生成端的编码工具不受此变更影响。

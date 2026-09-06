@@ -1,213 +1,120 @@
-import shutil
-import subprocess
-import time
-from pathlib import Path
+import uuid
+from dataclasses import replace
+from unittest.mock import Mock
 
 import pytest
 
-from app.media import (
-    MediaErrorCode,
-    MediaPolicy,
-    MediaProcessLimits,
-    MediaValidationError,
-    MediaValidator,
-    inspect_ffmpeg_build,
-)
-from app.provider import FailureCode, mock_video_fixture
+from app.artifacts import ArtifactReceiptError, RemoteArtifactReceiver
+from app.media import MediaErrorCode, MediaPolicy, MediaValidationError, MediaValidator
+from app.provider import FailureCode, ProviderOutput
+from app.storage import LocalObjectStorage
 
-FIXTURES = Path(__file__).parent / "fixtures" / "media"
-POLICY = MediaPolicy(expected_duration_ms=5_000, expected_aspect_ratio="16:9")
-pytestmark = pytest.mark.media
+POLICY = MediaPolicy(expected_duration_ms=5000, expected_aspect_ratio="16:9")
+OUTPUT = ProviderOutput(duration_ms=5000, width=1280, height=720, fps=16, codec="h264")
 
 
-def test_mock_success_fixture_uses_playable_h264_and_truthful_metadata(tmp_path):
-    path = tmp_path / "mock.mp4"
-    path.write_bytes(mock_video_fixture())
+@pytest.mark.parametrize("width,height,aspect", [(1280, 720, "16:9"), (720, 1280, "9:16")])
+def test_metadata_validation_has_no_file_or_process_dependency(width, height, aspect):
     facts = MediaValidator().validate(
-        path, MediaPolicy(expected_duration_ms=2_000, expected_aspect_ratio="16:9")
+        replace(OUTPUT, width=width, height=height),
+        MediaPolicy(expected_duration_ms=5000, expected_aspect_ratio=aspect),
     )
-    assert (facts.codec, facts.frame_rate, facts.duration_ms) == ("h264", 25, 2_000)
-
-
-def assert_media_error(
-    path: Path,
-    code: MediaErrorCode,
-    failure_code: FailureCode,
-) -> MediaValidationError:
-    with pytest.raises(MediaValidationError) as caught:
-        MediaValidator().validate(path, POLICY)
-    assert caught.value.code == code
-    assert caught.value.failure_code == failure_code
-    assert caught.value.details
-    return caught.value
-
-
-def test_valid_720p_h264_fixture_passes_probe_policy_and_full_decode() -> None:
-    facts = MediaValidator().validate(FIXTURES / "valid-720p-h264.mp4", POLICY)
-
-    assert facts.container == "mp4"
-    assert facts.codec == "h264"
-    assert facts.duration_ms == 5_000
-    assert (facts.width, facts.height) == (1280, 720)
-    assert facts.aspect_ratio == "16:9"
-    assert facts.pixel_format == "yuv420p"
-    assert facts.frame_rate == 5
-    assert facts.decodable is True
+    assert (facts.width, facts.height, facts.duration_ms, facts.codec) == (
+        width,
+        height,
+        5000,
+        "h264",
+    )
+    assert facts.frame_rate == 16
+    assert not hasattr(facts, "decodable")
 
 
 @pytest.mark.parametrize(
-    ("fixture", "code"),
+    "field,value,code",
     [
-        ("wrong-container.mkv", MediaErrorCode.CONTAINER_INVALID),
-        ("wrong-resolution.mp4", MediaErrorCode.RESOLUTION_INVALID),
-        ("wrong-duration.mp4", MediaErrorCode.DURATION_INVALID),
-        ("wrong-codec.mp4", MediaErrorCode.CODEC_INVALID),
+        ("media_type", "video/webm", MediaErrorCode.CONTAINER_INVALID),
+        ("codec", None, MediaErrorCode.CODEC_INVALID),
+        ("codec", "vp9", MediaErrorCode.CODEC_INVALID),
+        ("width", None, MediaErrorCode.RESOLUTION_INVALID),
+        ("height", 1080, MediaErrorCode.RESOLUTION_INVALID),
+        ("width", True, MediaErrorCode.RESOLUTION_INVALID),
+        ("width", 1280.0, MediaErrorCode.RESOLUTION_INVALID),
+        ("duration_ms", None, MediaErrorCode.DURATION_INVALID),
+        ("duration_ms", True, MediaErrorCode.DURATION_INVALID),
+        ("duration_ms", "5000", MediaErrorCode.DURATION_INVALID),
+        ("duration_ms", 0, MediaErrorCode.DURATION_INVALID),
+        ("duration_ms", 4749, MediaErrorCode.DURATION_INVALID),
+        ("duration_ms", 5251, MediaErrorCode.DURATION_INVALID),
+        ("fps", None, MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", True, MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", "16", MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", 0, MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", -1, MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", float("nan"), MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", float("inf"), MediaErrorCode.FRAME_RATE_INVALID),
+        ("fps", 241, MediaErrorCode.FRAME_RATE_INVALID),
     ],
 )
-def test_media_policy_rejects_wrong_facts(fixture: str, code: MediaErrorCode) -> None:
-    error = assert_media_error(
-        FIXTURES / fixture,
-        code,
-        FailureCode.OUTPUT_INVALID_MEDIA,
-    )
-    assert set(error.details) == {"expected", "actual"}
-
-
-def test_full_decode_rejects_a_damaged_mp4_that_ffprobe_can_describe() -> None:
-    error = assert_media_error(
-        FIXTURES / "corrupt-decode.mp4",
-        MediaErrorCode.DECODE_FAILED,
-        FailureCode.OUTPUT_CORRUPTED,
-    )
-    assert error.details["returncode"] != 0
-    assert len(str(error.details["stderr"])) <= 2_048
-
-
-def test_expected_portrait_policy_rejects_a_landscape_fixture() -> None:
-    portrait_policy = MediaPolicy(
-        expected_duration_ms=5_000,
-        expected_aspect_ratio="9:16",
-    )
-
+def test_invalid_or_missing_metadata_is_rejected(field, value, code):
     with pytest.raises(MediaValidationError) as caught:
-        MediaValidator().validate(FIXTURES / "valid-720p-h264.mp4", portrait_policy)
-
-    assert caught.value.code == MediaErrorCode.ASPECT_RATIO_INVALID
-    assert caught.value.details == {"expected": "9:16", "actual": "16:9"}
-
-
-def test_missing_media_has_a_structured_output_missing_error(tmp_path: Path) -> None:
-    with pytest.raises(MediaValidationError) as caught:
-        MediaValidator().validate(tmp_path / "missing.mp4", POLICY)
-
-    assert caught.value.code == MediaErrorCode.FILE_MISSING
-    assert caught.value.failure_code == FailureCode.OUTPUT_MISSING
+        MediaValidator().validate(replace(OUTPUT, **{field: value}), POLICY)
+    assert caught.value.code == code
+    assert caught.value.failure_code == FailureCode.OUTPUT_INVALID_MEDIA
 
 
-def test_media_path_is_one_argument_and_cannot_inject_a_command(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    marker = tmp_path / "injected"
-    suspicious = tmp_path / "valid;touch injected.mp4"
-    shutil.copyfile(FIXTURES / "valid-720p-h264.mp4", suspicious)
-    real_popen = subprocess.Popen
-    calls: list[tuple[tuple[str, ...], bool]] = []
-
-    def recording_popen(argv: tuple[str, ...], **kwargs: object):
-        calls.append((argv, bool(kwargs.get("shell"))))
-        return real_popen(argv, **kwargs)
-
-    monkeypatch.setattr(subprocess, "Popen", recording_popen)
-
-    facts = MediaValidator().validate(suspicious, POLICY)
-
-    assert facts.decodable is True
-    assert not marker.exists()
-    assert len(calls) == 2
-    assert all(shell is False for _, shell in calls)
-    assert all(argv[-1] == str(suspicious) or str(suspicious) in argv for argv, _ in calls)
-
-
-@pytest.mark.posix
-def test_ffprobe_timeout_kills_its_child_process(tmp_path: Path) -> None:
-    fake_ffprobe = tmp_path / "ffprobe-sleeper"
-    fake_ffprobe.write_text(
-        """#!/usr/bin/env python3
-import pathlib
-import subprocess
-import sys
-import time
-
-media_path = pathlib.Path(sys.argv[-1])
-child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-media_path.with_suffix(".child.pid").write_text(str(child.pid))
-time.sleep(60)
-""",
-        encoding="utf-8",
+@pytest.mark.parametrize("duration", [4750, 5000, 5250])
+def test_duration_tolerance_is_inclusive(duration):
+    assert (
+        MediaValidator().validate(replace(OUTPUT, duration_ms=duration), POLICY).duration_ms
+        == duration
     )
-    fake_ffprobe.chmod(0o755)
-    media_path = tmp_path / "input.mp4"
-    media_path.write_bytes(b"input")
-    limits = MediaProcessLimits(
-        timeout_seconds=0.3,
-        cpu_time_seconds=2,
-        max_memory_bytes=128 * 1024 * 1024,
+
+
+def test_wrong_orientation_is_rejected():
+    with pytest.raises(MediaValidationError, match="画幅"):
+        MediaValidator().validate(replace(OUTPUT, width=720, height=1280), POLICY)
+
+
+def test_invalid_metadata_is_rejected_before_storage_access():
+    job, attempt = uuid.uuid4(), uuid.uuid4()
+    storage = Mock()
+    receiver = RemoteArtifactReceiver(storage, MediaValidator(), max_bytes=1024)
+    output = replace(
+        OUTPUT,
+        object_key=f"provider-outputs/{job}/{attempt}/output.mp4",
+        size_bytes=1,
+        sha256="a" * 64,
+        duration_ms=None,
     )
-    validator = MediaValidator(ffprobe_binary=str(fake_ffprobe), probe_limits=limits)
-
-    started = time.monotonic()
-    with pytest.raises(MediaValidationError) as caught:
-        validator.validate(media_path, POLICY)
-    elapsed = time.monotonic() - started
-
-    assert caught.value.code == MediaErrorCode.FFPROBE_TIMEOUT
-    assert elapsed < 3
-    child_pid = int(media_path.with_suffix(".child.pid").read_text())
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        try:
-            state = Path(f"/proc/{child_pid}/stat").read_text().split()[2]
-        except FileNotFoundError:
-            break
-        if state == "Z":
-            break
-        time.sleep(0.05)
-    else:
-        pytest.fail("ffprobe child process remained alive after timeout")
+    with pytest.raises(ArtifactReceiptError) as caught:
+        receiver.receive_and_publish(job_id=job, attempt_id=attempt, output=output, policy=POLICY)
+    assert caught.value.failure.code == FailureCode.OUTPUT_INVALID_MEDIA
+    assert storage.mock_calls == []
 
 
-def test_ffmpeg_build_inventory_records_configuration_codec_and_license() -> None:
-    facts = inspect_ffmpeg_build()
+def test_receipt_checks_integrity_without_decoding_video(tmp_path):
+    # Deliberately opaque bytes: media content is not decoded by the control plane.
+    content = b"opaque-provider-video"
+    job, attempt = uuid.uuid4(), uuid.uuid4()
+    storage = LocalObjectStorage(tmp_path, b"test-storage-secret-at-least-32-bytes")
+    claim = storage.write_claim(
+        f"provider-outputs/{job}/{attempt}", mime_type="video/mp4", max_bytes=len(content)
+    )
+    source = storage.put(claim, content, "video/mp4")
+    output = replace(
+        OUTPUT, object_key=source.key, size_bytes=source.size_bytes, sha256=source.sha256
+    )
+    published = RemoteArtifactReceiver(
+        storage, MediaValidator(), max_bytes=1024
+    ).receive_and_publish(
+        job_id=job,
+        attempt_id=attempt,
+        output=output,
+        policy=POLICY,
+    )
+    assert published.stored.sha256 == source.sha256
+    assert published.stored.size_bytes == len(content)
+    assert published.facts.duration_ms == 5000
 
-    assert facts.version
-    assert facts.configuration
-    assert facts.license_status in {"LGPL", "GPL", "NONFREE"}
-    assert "h264" in facts.h264_decoders
-    assert facts.h264_encoders
 
-
-def test_process_limits_reject_unbounded_values() -> None:
-    with pytest.raises(ValueError):
-        MediaProcessLimits(
-            timeout_seconds=0,
-            cpu_time_seconds=1,
-            max_memory_bytes=128 * 1024 * 1024,
-        )
-    with pytest.raises(ValueError):
-        MediaProcessLimits(
-            timeout_seconds=1,
-            cpu_time_seconds=1,
-            max_memory_bytes=1,
-        )
-
-
-def test_ffprobe_not_found_is_structured() -> None:
-    validator = MediaValidator(ffprobe_binary="definitely-not-a-real-ffprobe")
-
-    with pytest.raises(MediaValidationError) as caught:
-        validator.validate(FIXTURES / "valid-720p-h264.mp4", POLICY)
-
-    assert caught.value.code == MediaErrorCode.FFPROBE_NOT_FOUND
-    assert caught.value.failure_code == FailureCode.INTERNAL_ERROR
-    assert caught.value.details == {"tool": "definitely-not-a-real-ffprobe"}
+pytestmark = pytest.mark.media

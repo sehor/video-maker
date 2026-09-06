@@ -107,6 +107,11 @@ class _WorkerArtifact(_StrictModel):
     claim: str = Field(pattern=r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
     object_key: str = Field(min_length=1, max_length=255, pattern=r"^[A-Za-z0-9_./-]+$")
     media_type: Literal["video/mp4"]
+    duration_ms: int = Field(gt=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    fps: float = Field(gt=0, le=240, allow_inf_nan=False)
+    codec: str = Field(min_length=1, max_length=32)
     size_bytes: int = Field(gt=0)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
 
@@ -427,11 +432,11 @@ class RunPodVideoProvider:
             output=ProviderOutput(
                 content=None,
                 media_type=artifact.media_type,
-                duration_ms=None,
-                width=None,
-                height=None,
-                fps=None,
-                codec=None,
+                duration_ms=artifact.duration_ms,
+                width=artifact.width,
+                height=artifact.height,
+                fps=artifact.fps,
+                codec=artifact.codec,
                 object_key=artifact.object_key,
                 size_bytes=artifact.size_bytes,
                 sha256=artifact.sha256,

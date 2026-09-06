@@ -153,7 +153,7 @@ class RunWorkerPocTests(unittest.TestCase):
             client=provider,
             clock=clock,
             sleep=clock.sleep,
-            media_validator=lambda _path, aspect: {
+            media_validator=lambda _path, aspect, _metadata: {
                 "validated": True,
                 "aspect_ratio": aspect,
             },
@@ -182,7 +182,7 @@ class RunWorkerPocTests(unittest.TestCase):
                 config,
                 self.root / "budget-evidence.json",
                 client=provider,
-                media_validator=lambda _path, _aspect: {},
+                media_validator=lambda _path, _aspect, _metadata: {},
             )
         self.assertEqual(provider.requests, [])
 
@@ -197,7 +197,7 @@ class RunWorkerPocTests(unittest.TestCase):
                 client=provider,
                 clock=clock,
                 sleep=clock.sleep,
-                media_validator=lambda _path, _aspect: {},
+                media_validator=lambda _path, _aspect, _metadata: {},
             )
         self.assertEqual(provider.cancelled, ["job-1"])
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -217,7 +217,7 @@ class RunWorkerPocTests(unittest.TestCase):
                 client=provider,
                 clock=clock,
                 sleep=clock.sleep,
-                media_validator=lambda _path, _aspect: {},
+                media_validator=lambda _path, _aspect, _metadata: {},
             )
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         self.assertGreaterEqual(evidence["cleanup"]["cancel_failures"], 1)
@@ -262,22 +262,20 @@ class RunWorkerPocTests(unittest.TestCase):
                 ROOT / "issue-14-evidence.json"
             )
 
-    def test_poc_media_validator_accepts_the_existing_r10_fixture(self) -> None:
-        media = (
-            ROOT
-            / "apps"
-            / "api"
-            / "tests"
-            / "fixtures"
-            / "media"
-            / "valid-720p-h264.mp4"
-        )
-        facts = run_worker_poc.validate_media(media, "16:9")
+    def test_poc_media_validator_checks_provider_metadata(self) -> None:
+        media = self.root / "opaque.mp4"
+        media.write_bytes(b"opaque-video")
+        metadata = {
+            "media_type": "video/mp4", "codec": "h264",
+            "width": 1280, "height": 720, "duration_ms": 5000,
+            "fps": 16, "size_bytes": media.stat().st_size,
+        }
+        facts = run_worker_poc.validate_media(media, "16:9", metadata)
+        self.assertEqual(facts["validation_method"], "provider_metadata")
         self.assertEqual((facts["width"], facts["height"]), (1280, 720))
-        self.assertEqual(
-            (facts["container"], facts["codec"], facts["pix_fmt"]),
-            ("mp4", "h264", "yuv420p"),
-        )
+        for invalid in ({"size_bytes": 0}, {"codec": "vp9"}, {"duration_ms": 0}, {"fps": 0}):
+            with self.subTest(invalid=invalid), self.assertRaises(run_worker_poc.PocError):
+                run_worker_poc.validate_media(media, "16:9", {**metadata, **invalid})
 
     def test_evidence_template_contains_all_gate_sections(self) -> None:
         path = ROOT / "workers" / "runpod-comfyui" / "evidence-template.json"
