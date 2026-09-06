@@ -1,0 +1,93 @@
+"""Temporary review probes: assert intended behavior, without changing production code."""
+import asyncio
+import uuid
+
+import pytest
+from sqlalchemy import select
+
+from app import public_api
+from app.db import SessionLocal
+from app.errors import ApiError
+from app.models import GenerationJob, ProjectAsset
+from app.provider_execution import GenerationExecutionService
+from app.routing import MOCK_ROUTE_VERSION, SIMULATED_RUNPOD_ROUTE_VERSION, get_route_registry
+from tests.test_provider_routing import _quoted_shot
+from tests.test_remote_artifacts import MEDIA_FIXTURES, _execute, _storage
+
+pytestmark = pytest.mark.database
+
+
+def test_review_repeated_write_preserves_existing_object():
+    store = _storage()
+    claim = store.write_claim('assets', mime_type='image/png', max_bytes=8)
+    original = store.put(claim, b'original', 'image/png')
+    with pytest.raises(ApiError) as rejected:
+        store.put(claim, b'repeated', 'image/png')
+    assert rejected.value.code == 'STORAGE_OBJECT_EXISTS'
+    assert store.stat(original.key).sha256 == original.sha256
+
+
+def _submit(client, shot, quote):
+    response = client.post('/v1/generations', json={'shot_id': shot['id'], 'quote_id': quote['id']})
+    assert response.status_code == 202
+    return uuid.UUID(response.json()['id'])
+
+
+def test_review_job_input_is_frozen(raw_client):
+    shot, quote, _ = _quoted_shot(raw_client, with_reference=False)
+    job_id = _submit(raw_client, shot, quote)
+    updated = raw_client.patch(f"/v1/shots/{shot['id']}", json={'prompt': 'A completely different scene'})
+    assert updated.status_code == 200
+    context = GenerationExecutionService(_storage())._load_active_attempt(job_id)
+    assert context.prompt == shot['prompt'], 'Queued Job now reads the edited Shot prompt'
+
+
+def test_review_project_keeps_route(raw_client):
+    routes = get_route_registry()
+    previous = routes.active_key
+    try:
+        routes.activate(MOCK_ROUTE_VERSION)
+        shot, quote, _ = _quoted_shot(raw_client, with_reference=True)
+        first = _submit(raw_client, shot, quote)
+        routes.activate(SIMULATED_RUNPOD_ROUTE_VERSION)
+        quote2 = raw_client.post('/v1/quotes', json={'shot_id': shot['id'], 'tier': 'FAST', 'resolution': '720P'})
+        assert quote2.status_code == 201
+        second = _submit(raw_client, shot, quote2.json())
+        with SessionLocal() as db:
+            assert db.get(GenerationJob, first).selected_route_candidate_id == db.get(GenerationJob, second).selected_route_candidate_id, 'Same Project switched route with the global active route'
+    finally:
+        routes.activate(previous)
+
+
+def test_review_explicit_null_patch_is_client_error(raw_client):
+    shot, _, _ = _quoted_shot(raw_client, with_reference=False)
+    raw_client.raise_server_exceptions = False
+    raw_client._transport.raise_server_exceptions = False
+    response = raw_client.patch(f"/v1/shots/{shot['id']}", json={'prompt': None})
+    assert response.status_code == 422, f'Explicit null returned {response.status_code}'
+
+
+def test_review_input_reference_survives_detach(raw_client):
+    shot, quote, asset = _quoted_shot(raw_client, with_reference=True)
+    job_id = _submit(raw_client, shot, quote)
+    refs = raw_client.get(f"/v1/shots/{shot['id']}").json()['references']
+    assert raw_client.delete(f"/v1/shots/{shot['id']}/references/{refs[0]['id']}").status_code == 204
+    context = GenerationExecutionService(_storage())._load_active_attempt(job_id)
+    with SessionLocal() as db:
+        key = db.get(ProjectAsset, uuid.UUID(asset['id'])).object_key
+    assert context.reference_object_key == key, 'Queued Job loses its accepted reference asset'
+
+
+@pytest.mark.media
+def test_review_project_deletion_cleans_provider_source(raw_client):
+    content = (MEDIA_FIXTURES / 'valid-720p-h264.mp4').read_bytes()
+    job_id, provider, _ = _execute(raw_client, content)
+    source_key = next(iter(provider._outputs.values())).object_key
+    with SessionLocal() as db:
+        job = db.scalar(select(GenerationJob).where(GenerationJob.id == job_id))
+        assert job.status.value == 'SUCCEEDED'
+        project_id = job.project_id
+    assert raw_client.delete(f'/v1/projects/{project_id}').status_code == 204
+    asyncio.run(public_api.dispatch_storage_cleanup_outbox())
+    remaining = list(_storage().root.rglob('*.mp4'))
+    assert not remaining, f'Deleted project retains provider source: {source_key}'
