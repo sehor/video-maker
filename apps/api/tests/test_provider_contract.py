@@ -4,16 +4,19 @@ import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import GenerationJob
+from app.models import GenerationJob, JobEvent
 from app.provider import (
     RETRYABLE_FAILURE_CODES,
     FailureCode,
     MockVideoProvider,
     PollResult,
+    ProviderFailure,
     ProviderStatus,
+    ProviderSubmissionError,
     is_retryable_failure,
 )
 from app.provider_execution import AttemptBudget, GenerationExecutionService
@@ -125,8 +128,54 @@ def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClie
     assert len(refreshed["attempts"]) == 1
     assert len(provider.submit_calls) == 1
     assert provider.poll_calls == 2
-    assert {event["event_type"] for event in refreshed["events"]} >= {
+    with SessionLocal() as db:
+        event_types = set(
+            db.scalars(
+                select(JobEvent.event_type).where(JobEvent.job_id == job_id)
+            )
+        )
+    assert event_types >= {
         "provider.submit_unknown",
         "provider.reconciled",
         "attempt.reconciled",
     }
+
+
+def test_submit_rejection_fails_without_unknown_reconciliation(
+    raw_client: TestClient,
+) -> None:
+    class RejectingProvider(MockVideoProvider):
+        async def submit(self, request):
+            raise ProviderSubmissionError(
+                ProviderFailure(
+                    FailureCode.PROVIDER_AUTHENTICATION,
+                    "Provider authentication failed",
+                )
+            )
+
+    queued = generate(raw_client, create_shot(raw_client)["id"], "success")
+    job_id = uuid.UUID(queued["id"])
+    settings = get_settings()
+    executor = GenerationExecutionService(
+        LocalObjectStorage(
+            settings.storage_root,
+            settings.storage_claim_secret.get_secret_value().encode(),
+        ),
+        provider=RejectingProvider(),
+    )
+
+    asyncio.run(executor.execute(job_id))
+
+    failed = raw_client.get(f"/v1/generations/{queued['id']}").json()
+    assert failed["status"] == "FAILED_FINAL"
+    assert failed["failure_code"] == "GENERATION_FAILED"
+    assert failed["attempts"][0]["status"] == "FAILED_FINAL"
+    assert len(failed["attempts"]) == 1
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, job_id)
+        assert job is not None
+        assert job.failure_code == FailureCode.PROVIDER_AUTHENTICATION.value
+        event_types = set(
+            db.scalars(select(JobEvent.event_type).where(JobEvent.job_id == job_id))
+        )
+    assert "provider.submit_unknown" not in event_types

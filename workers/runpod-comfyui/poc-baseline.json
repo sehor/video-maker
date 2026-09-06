@@ -1,0 +1,63 @@
+{
+  "issue": 14,
+  "route_id": "fast_wan_i2v_720_v1",
+  "adoption_status": "CONDITIONAL",
+  "poc_status": "SKIPPED_BY_USER_UNVALIDATED",
+  "upstream": {
+    "worker_comfyui": {
+      "repository": "https://github.com/runpod-workers/worker-comfyui",
+      "version": "5.8.7",
+      "commit": "a1981e99b1f5a7201f387653420ad1f275b97d0a",
+      "image_reference": null,
+      "registry_evidence": {
+        "checked": [
+          "docker.io/runpod/worker-comfyui:5.8.7-base",
+          "docker.io/runpod/worker-comfyui:5.8.7"
+        ],
+        "result": "NOT_FOUND"
+      }
+    },
+    "comfyui": {
+      "repository": "https://github.com/comfyanonymous/ComfyUI",
+      "version": "0.29.0",
+      "commit": "a8c44f9b2a0678ac4082e3529a3f43db7472acfe"
+    },
+    "comfy_cli": {
+      "repository": "https://github.com/Comfy-Org/comfy-cli",
+      "version": "1.18.0",
+      "commit": "6a5e9d772453f27b0778b14e8a4b1e25ac5f949e"
+    }
+  },
+  "production": {
+    "comfyui_manager": false,
+    "public_comfyui_port": false,
+    "accepts_arbitrary_workflow": false,
+    "accepts_arbitrary_model": false,
+    "accepts_arbitrary_node": false,
+    "accepts_code": false,
+    "accepts_url": false,
+    "storage_access": "SYSTEM_SIGNED_CLAIMS_ONLY"
+  },
+  "authorization": {
+    "credentials_provided": false,
+    "cost_approved": false,
+    "user_selected_skip": true
+  },
+  "real_poc": {
+    "source_build_verified": false,
+    "image_digest": null,
+    "model_sha256": {},
+    "runs": [],
+    "cold_start_ms": null,
+    "runtime_ms": null,
+    "cost_minor": null,
+    "currency": null,
+    "failures": [],
+    "decision": "SKIPPED_UNVALIDATED"
+  },
+  "skip_record": {
+    "real_runpod_poc_executed": false,
+    "reason": "MISSING_CREDENTIALS_AND_COST_AUTHORIZATION",
+    "user_instruction": "SKIP_AND_PROCEED_WITHOUT_CLAIMING_PASS"
+  }
+}

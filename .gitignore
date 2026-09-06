@@ -1,5 +1,6 @@
 .env
 .env.local
+.env.compose
 .venv/
 __pycache__/
 .pytest_cache/
@@ -14,3 +15,5 @@ coverage/
 playwright-report/
 test-results/
 data/
+graphify-out/
+package-lock.json

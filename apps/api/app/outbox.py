@@ -9,7 +9,8 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.models import GenerationJob, OutboxEvent, OutboxStatus
+from app.dead_letters import add_dead_letter
+from app.models import DeadLetterSource, GenerationJob, OutboxEvent, OutboxStatus
 from app.workflow import WorkflowStarter, WorkflowStartRequest
 
 GENERATION_WORKFLOW_START = "generation.workflow.start"
@@ -46,6 +47,7 @@ class DispatchResult(StrEnum):
     IDLE = "IDLE"
     PUBLISHED = "PUBLISHED"
     RETRY_SCHEDULED = "RETRY_SCHEDULED"
+    DEAD_LETTERED = "DEAD_LETTERED"
 
 
 class OutboxDispatcher:
@@ -56,13 +58,17 @@ class OutboxDispatcher:
         *,
         lease_duration: timedelta = timedelta(seconds=30),
         retry_delay: timedelta = timedelta(seconds=1),
+        max_attempts: int = 5,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.session_factory = session_factory
         self.starter = starter
         self.lease_duration = lease_duration
         self.retry_delay = retry_delay
+        self.max_attempts = max_attempts
         self.clock = clock
+        if max_attempts <= 0:
+            raise ValueError("outbox max attempts must be positive")
 
     async def dispatch_once(self) -> DispatchResult:
         event = self._claim_one()
@@ -78,8 +84,7 @@ class OutboxDispatcher:
                 )
             )
         except Exception as exc:
-            self._schedule_retry(event, exc)
-            return DispatchResult.RETRY_SCHEDULED
+            return self._schedule_retry(event, exc)
         self.after_start(event)
         self._mark_published(event, result.workflow_id)
         return DispatchResult.PUBLISHED
@@ -153,34 +158,58 @@ class OutboxDispatcher:
                 return None
         return None
 
-    def _schedule_retry(self, event: ClaimedOutboxEvent, exc: Exception) -> None:
+    def _schedule_retry(self, event: ClaimedOutboxEvent, exc: Exception) -> DispatchResult:
         now = self.clock()
+        error = f"{type(exc).__name__}: {exc}"[:2000]
         with self.session_factory() as db:
-            retried = db.execute(
-                update(OutboxEvent)
+            source = db.scalar(
+                select(OutboxEvent)
                 .where(
                     OutboxEvent.id == event.id,
                     OutboxEvent.status == OutboxStatus.PROCESSING,
                     OutboxEvent.lock_token == event.lock_token,
                 )
-                .values(
-                    status=OutboxStatus.PENDING,
-                    next_attempt_at=now + self.retry_delay,
-                    locked_at=None,
-                    lock_token=None,
-                    last_error=f"{type(exc).__name__}: {exc}"[:2000],
-                )
+                .with_for_update()
             )
-            if retried.rowcount != 1:
+            if source is None:
                 db.rollback()
                 raise RuntimeError("outbox lease was lost while scheduling a retry")
+            if source.attempt_count >= self.max_attempts:
+                source.status = OutboxStatus.DEAD_LETTER
+                add_dead_letter(
+                    db,
+                    source_type=DeadLetterSource.OUTBOX,
+                    source_id=source.id,
+                    event_type=source.event_type,
+                    payload=dict(source.payload_json),
+                    attempt_count=source.attempt_count,
+                    error=error,
+                )
+                result = DispatchResult.DEAD_LETTERED
+            else:
+                source.status = OutboxStatus.PENDING
+                source.next_attempt_at = now + self.retry_delay
+                result = DispatchResult.RETRY_SCHEDULED
+            source.locked_at = None
+            source.lock_token = None
+            source.last_error = error
             db.commit()
+        if result == DispatchResult.DEAD_LETTERED:
+            logger.error(
+                "outbox.dead_lettered",
+                outbox_event_id=str(event.id),
+                event_type=event.event_type,
+                attempt_count=self.max_attempts,
+                error_type=type(exc).__name__,
+            )
+            return result
         logger.warning(
             "outbox.retry_scheduled",
             outbox_event_id=str(event.id),
             job_id=str(event.job_id),
             error_type=type(exc).__name__,
         )
+        return result
 
     def _mark_published(self, event: ClaimedOutboxEvent, workflow_id: str) -> None:
         now = self.clock()

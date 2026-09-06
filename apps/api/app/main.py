@@ -4,6 +4,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 import structlog
 from fastapi import FastAPI, Request
@@ -12,10 +13,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import dispatch_generation_outbox, router
+from app.api import (
+    dispatch_generation_outbox,
+    dispatch_provider_cancel_outbox,
+    dispatch_storage_cleanup_outbox,
+    reconcile_generation_job,
+    router,
+)
 from app.config import get_settings
+from app.control_plane import ControlPlaneReconciler, ReadinessService
+from app.db import SessionLocal
 from app.errors import ApiError
+from app.local_workflow import LocalWorkflowStarter
 from app.outbox import DispatchResult
+from app.public_api import storage, workflow_starter
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 structlog.configure(
@@ -47,20 +58,104 @@ async def outbox_dispatcher_loop(stop: asyncio.Event) -> None:
     logger.info("outbox.dispatcher_stopped")
 
 
+async def provider_cancel_dispatcher_loop(stop: asyncio.Event) -> None:
+    logger.info("provider_cancel_outbox.dispatcher_started")
+    while not stop.is_set():
+        try:
+            result = await dispatch_provider_cancel_outbox()
+        except Exception as exc:
+            logger.exception(
+                "provider_cancel_outbox.dispatcher_failed",
+                error_type=type(exc).__name__,
+            )
+            result = None
+        if result == DispatchResult.PUBLISHED:
+            continue
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.outbox_poll_interval_seconds)
+        except TimeoutError:
+            pass
+    logger.info("provider_cancel_outbox.dispatcher_stopped")
+
+
+async def storage_cleanup_dispatcher_loop(stop: asyncio.Event) -> None:
+    logger.info("storage_cleanup_outbox.dispatcher_started")
+    while not stop.is_set():
+        try:
+            result = await dispatch_storage_cleanup_outbox()
+        except Exception as exc:
+            logger.exception(
+                "storage_cleanup_outbox.dispatcher_failed",
+                error_type=type(exc).__name__,
+            )
+            result = None
+        if result == DispatchResult.PUBLISHED:
+            continue
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.outbox_poll_interval_seconds)
+        except TimeoutError:
+            pass
+    logger.info("storage_cleanup_outbox.dispatcher_stopped")
+
+
+async def control_plane_reconciler_loop(stop: asyncio.Event) -> None:
+    reconciler = ControlPlaneReconciler(
+        SessionLocal,
+        (
+            dispatch_generation_outbox,
+            dispatch_provider_cancel_outbox,
+            dispatch_storage_cleanup_outbox,
+        ),
+        reconcile_generation_job,
+        stuck_after=timedelta(seconds=settings.reconciler_stuck_after_seconds),
+    )
+    logger.info("control_plane.reconciler_started")
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(
+                stop.wait(), timeout=settings.reconciler_interval_seconds
+            )
+        except TimeoutError:
+            try:
+                await reconciler.reconcile_once()
+            except Exception as exc:
+                logger.exception(
+                    "control_plane.reconciler_failed",
+                    error_type=type(exc).__name__,
+                )
+    logger.info("control_plane.reconciler_stopped")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     stop = asyncio.Event()
-    task = (
-        asyncio.create_task(outbox_dispatcher_loop(stop))
-        if settings.outbox_dispatcher_enabled
-        else None
-    )
+    tasks: list[asyncio.Task[None]] = []
+    local_runner = workflow_starter if isinstance(workflow_starter, LocalWorkflowStarter) else None
     try:
+        if local_runner is not None:
+            await local_runner.startup()
+        if settings.outbox_dispatcher_enabled or settings.reconciler_enabled:
+            if not workflow_starter.ready():
+                raise RuntimeError(f"WORKFLOW_BACKEND={settings.workflow_backend} is not ready")
+        if settings.outbox_dispatcher_enabled:
+            tasks.extend(
+                [
+                    asyncio.create_task(outbox_dispatcher_loop(stop)),
+                    asyncio.create_task(provider_cancel_dispatcher_loop(stop)),
+                    asyncio.create_task(storage_cleanup_dispatcher_loop(stop)),
+                ]
+            )
+        if settings.reconciler_enabled:
+            tasks.append(asyncio.create_task(control_plane_reconciler_loop(stop)))
         yield
     finally:
-        if task is not None:
-            stop.set()
-            await task
+        stop.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if local_runner is not None:
+            await local_runner.shutdown()
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -131,6 +226,28 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz() -> JSONResponse:
+    result = ReadinessService(
+        SessionLocal,
+        lambda: storage().ready(),
+        workflow_starter.ready,
+    ).check()
+    status_code = 200 if result.ready else 503
+    if not result.ready:
+        logger.warning(
+            "readiness.failed",
+            failed_checks=[name for name, ready in result.checks.items() if not ready],
+        )
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if result.ready else "not_ready",
+            "checks": result.checks,
+        },
+    )
 
 
 app.include_router(router)

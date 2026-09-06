@@ -1,11 +1,30 @@
-# 计划二｜WSL2 Docker 安装与维护
+# 计划二｜WSL2 Docker 集成／发布维护手册
 
-> 本说明只针对本机开发环境，不改变项目业务架构。环境完成日期：2026-08-25。
+> 2026-08-31：本文已从本机开发指南降级为独立集成／发布维护手册。
+> 日常开发使用 Windows 原生命令，不需要启动 WSL/Docker；旧环境记录保留用于资源复用。
 
-> **Docker 操作入口：** 先执行第 3 节预检并复用 Compose 资源。项目 PostgreSQL
-> 已有永久容器和 named volume，日常启动不新建独立 PostgreSQL 容器。
+> **预检分流：** Windows 数据库任务只执行下面的原生预检；明确执行容器集成任务时，
+> 才按第 3 节检查旧容器和 named volume。两套数据库彼此独立，不可混用配置。
 
-## 1. 已完成的环境
+## 原生开发与数据库预检
+
+默认架构为 Windows PostgreSQL + FastAPI/uv + Nuxt/pnpm + Local Backend + 本机 FFmpeg。
+从仓库根目录执行：
+
+```powershell
+./scripts/dev.ps1 check
+```
+
+该命令先校验数据库 URL 格式及 API/Auth 连接目标一致性，再检查登录、版本、迁移 head
+和 Auth 表；不创建、安装或重启 PostgreSQL。空密码的 URL 格式是 `USER:@`，特殊字符
+需百分号编码；连接失败先核对完整 URL，不直接归因于凭据。
+开发配置仅使用忽略提交的 `.env`，完整入口见根 [README](../README.md)。
+测试使用与开发库不同、名称以 `_test` 结尾的已有数据库，不清空开发数据。
+
+原生任务到此为止，不执行后文的 `wsl.exe -d ...`、Docker 或容器数据库命令。
+需要记录 WSL 停止状态时仅查询 `wsl.exe --list --verbose`；不因此启动发行版。
+
+## 1. 历史环境基线（2026-08-25，非本轮实测）
 
 - Windows 10 + WSL 2.6.3，发行版为 `Ubuntu-22.04`，WSL 版本为 2。
 - Ubuntu 已启用 systemd：`/etc/wsl.conf` 中有 `[boot] systemd=true`。
@@ -38,18 +57,21 @@ Windows
             └─ project Compose services
 ```
 
-Windows 当前没有 Docker CLI，也没有安装或依赖 Docker Desktop。统一从 WSL 调用 Docker：
+历史环境的 Windows 没有 Docker CLI，也不依赖 Docker Desktop。
+只有明确需要容器集成时才从 WSL 调用 Docker；这会唤醒已停止的发行版。
+预先准备独立 `.env.compose`，不得让 Compose 加载原生 `.env`：
 
 ```powershell
 wsl.exe -d Ubuntu-22.04 -- docker compose `
   --project-directory /mnt/e/projects/video-maker `
+  --env-file /mnt/e/projects/video-maker/.env.compose --profile integration `
   -f /mnt/e/projects/video-maker/compose.yaml ps -a
 ```
 
 也可以从 Windows PowerShell 直接执行：
 
 ```powershell
-wsl.exe -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/projects/video-maker && docker compose ps"
+wsl.exe -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/projects/video-maker && docker compose --env-file .env.compose --profile integration ps"
 ```
 
 不要设置 `DOCKER_HOST=tcp://...:2375`，不要运行 `dockerd -H tcp://0.0.0.0:2375`。
@@ -79,9 +101,11 @@ wsl.exe -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/projects/video-maker && docker co
 | named volume | `video-maker_postgres-data` |
 | 数据挂载 | `/var/lib/postgresql/data` |
 | 数据库／用户 | 业务库 `video_factory`、Hatchet 库 `hatchet`／`video_factory` |
-| Alembic 版本 | `0005_transactional_outbox` |
+| 当时 Alembic 版本 | `0005_transactional_outbox`，仅历史记录，操作前重新检查 |
 
-每次 Docker 或数据库任务按以下顺序执行：
+仅在明确执行容器集成或容器数据库任务时按以下顺序操作；Windows 数据库任务不执行此流程。
+先确认目标仍为已有 Compose project，`.env.compose` 未改为其他 project/数据库；
+对旧容器恢复优先使用 `start`，不通过 `up` 隐式更换数据库。
 
 ```powershell
 # 1. 确认发行版；Docker 位于 WSL2，不在 Windows PATH
@@ -90,11 +114,13 @@ wsl.exe --list --verbose
 # 2. 先看现有容器，包括 stopped 状态
 wsl.exe -d Ubuntu-22.04 -- docker compose `
   --project-directory /mnt/e/projects/video-maker `
+  --env-file /mnt/e/projects/video-maker/.env.compose --profile integration `
   -f /mnt/e/projects/video-maker/compose.yaml ps -a
 
 # 3. 现有 postgres 若为 stopped，只启动原容器
 wsl.exe -d Ubuntu-22.04 -- docker compose `
   --project-directory /mnt/e/projects/video-maker `
+  --env-file /mnt/e/projects/video-maker/.env.compose --profile integration `
   -f /mnt/e/projects/video-maker/compose.yaml start postgres
 
 # 4. 验证健康和迁移版本
@@ -110,27 +136,31 @@ wsl.exe -d Ubuntu-22.04 -- docker exec video-maker-postgres-1 `
 ```powershell
 wsl.exe -d Ubuntu-22.04 -- docker compose `
   --project-directory /mnt/e/projects/video-maker `
+  --env-file /mnt/e/projects/video-maker/.env.compose --profile integration `
   -f /mnt/e/projects/video-maker/compose.yaml up -d postgres
 ```
 
-项目 PostgreSQL 始终由 Compose service `postgres` 管理。不要用 `docker run postgres...`
+容器集成 PostgreSQL 由 Compose service `postgres` 管理，不是 Windows 开发数据库。
+不要用 `docker run postgres...`
 另建项目数据库容器；测试迁移优先在现有 PostgreSQL 内创建隔离测试数据库。
 Hatchet 通过一次性 `hatchet-db-init` 在同一 PostgreSQL 实例中幂等创建独立 `hatchet`
-数据库；`hatchet-token-init` 将本地开发 token 原子写入 `hatchet-auth` volume。两者均由
+数据库；`hatchet-token-init` 将容器集成 token 原子写入 `hatchet-auth` volume。两者均由
 Compose 管理，不另建长期 PostgreSQL 容器。
 
-## 4. 数据在哪里
+## 4. 原生与容器数据边界
 
 - 项目代码仍在 Windows `E:\projects\video-maker`，WSL 路径为 `/mnt/e/projects/video-maker`。
+- 默认开发数据在已有 Windows PostgreSQL，素材与结果在 `.env` 指定的 Windows 本地目录
+  （默认 `./data/storage`）；原生开发不读写以下旧容器卷。
 - Docker Engine 的镜像、容器层、网络和 named volume 保存在 WSL 的 Docker root：`/var/lib/docker`，实际位于 Ubuntu 的 WSL 虚拟磁盘中。
 - 项目 PostgreSQL volume 为 `video-maker_postgres-data`，挂载点为 `/var/lib/docker/volumes/video-maker_postgres-data/_data`。
-- `hatchet-config`、`hatchet-auth`、`local-storage` 和 `web-node-modules` 也是 Compose named
-  volume，不在 E: 代码目录中。
-- 将数据库和上传/结果数据放在 WSL named volume；不要把 PostgreSQL 数据目录 bind mount 到 `/mnt/e`。
+- `hatchet-config`、`hatchet-auth`、`local-storage` 是容器集成 named volume，不在 E: 代码目录中。
+  历史 `web-node-modules` 卷已不再挂载，保留原数据，不自动删除。
+- 仅容器集成将数据库和素材放在 named volume；不要把 PostgreSQL 数据目录 bind mount 到 `/mnt/e`。
 
-代码放在 E: 便于 Windows 工具访问，当前项目可正常运行。若后续大量 Linux 文件扫描、依赖安装或热重载出现性能问题，再考虑把完整工作树迁移到 `~/src/video-maker`；这不是本次环境配置的必要条件。
+代码保持在 Windows 工作树，日常运行和热更新使用原生进程；不为开发迁移到 WSL 文件系统。
 
-## 5. 常用操作
+## 5. 显式容器集成操作（非原生开发步骤）
 
 ```bash
 # 进入发行版
@@ -146,23 +176,25 @@ docker info
 docker compose version
 docker run --rm hello-world
 
-# 项目开发
+# 仅容器集成；dc 始终显式使用容器环境文件和 profile
 cd /mnt/e/projects/video-maker
-docker compose ps -a
-docker compose start postgres       # 日常恢复现有 PostgreSQL
-docker compose up -d                # 需要完整栈时创建/启动缺失服务
-docker compose up -d --build api hatchet-worker web # 仅依赖或 Dockerfile 变化时重建
-docker compose logs -f hatchet hatchet-worker
-docker compose logs -f postgres
-docker compose stop                 # 停止并保留现有容器
-docker compose down                 # 删除容器，保留 named volumes
-docker compose down -v              # 删除容器和项目数据，禁止用于日常操作
+dc() { docker compose --env-file .env.compose --profile integration "$@"; }
+dc ps -a
+dc start postgres       # 恢复已有容器数据库
+dc build api hatchet-worker web     # 仅在明确需要构建时执行
+dc up -d --wait          # 需要完整集成栈时创建/启动缺失服务
+dc logs -f hatchet hatchet-worker
+dc logs -f postgres
+dc stop                 # 暂停集成栈，保留现有容器和数据
 ```
 
-日常暂停使用 `docker compose stop`，日常恢复使用 `docker compose start`。`down`、`rm`
-和独立 `docker run` 都不是日常启动流程。
+这些命令不提供源码热更新，Web 运行构建产物。`down`、`rm` 和独立 `docker run postgres`
+不是恢复流程；禁止用 `down -v` 清理项目数据。发布生产镜像另行验收，不把集成镜像当生产保证。
 
 ## 6. 重启和故障排查
+
+本节仅用于已明确需要的容器环境维护；停止状态不属于原生开发故障。
+`wsl --shutdown` 会影响所有发行版，操作前确认没有其他工作负载，不用于原生验收。
 
 ### WSL 重启后 Docker 没有起来
 
@@ -211,10 +243,10 @@ netstat -ano | Select-String ':2375|:2376'
 
 ```bash
 cd /mnt/e/projects/video-maker
-docker compose ps postgres
-docker compose exec -T postgres pg_isready -U video_factory -d video_factory
+docker compose --env-file .env.compose --profile integration ps postgres
+docker compose --env-file .env.compose --profile integration exec -T postgres pg_isready -U video_factory -d video_factory
 docker volume inspect video-maker_postgres-data
-docker compose exec -T postgres psql -U video_factory -d video_factory \
+docker compose --env-file .env.compose --profile integration exec -T postgres psql -U video_factory -d video_factory \
   -Atc "SELECT version_num FROM alembic_version"
 ```
 
@@ -222,12 +254,16 @@ docker compose exec -T postgres psql -U video_factory -d video_factory \
 
 ### API 镜像构建遇到 `.pytest_cache` 权限错误
 
-`apps/api/.dockerignore` 已排除 `.venv`、`.pytest_cache`、测试数据库和本地数据目录。
+API 镜像现在使用仓库根构建上下文，由根 `.dockerignore` 排除 `.venv`、`.pytest_cache`、
+测试数据库、本机 `.env` 和本地数据目录。
 若旧缓存仍导致 `failed to xattr ... .pytest_cache: permission denied`，这是 Windows
 构建上下文 ACL 问题，不是 PostgreSQL 故障。保留现有 `postgres` 容器和 volume，修复或清理
 该缓存后再构建 API；不要通过另建 PostgreSQL 容器绕过问题。
 
-## 7. 已验证结果
+## 7. 历史已验证结果（2026-08-25，不代表当前集成已验收）
+
+本轮 Windows 原生改造没有启动或重验这些容器；实际结果见
+[WINDEV-06 原生总验收](reports/WINDEV-06_Windows原生总验收.md)。
 
 - `docker run --rm hello-world` 成功。
 - `docker compose version` 返回 `v2.39.4`。

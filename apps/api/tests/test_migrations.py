@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.config import get_settings
 
 
@@ -14,12 +15,19 @@ def alembic_config(database_url: str) -> Config:
     root = Path(__file__).resolve().parents[1]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 
 
+def only_alembic_head(config: Config) -> str:
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1, f"expected one Alembic head, found {heads}"
+    return heads[0]
+
+
 def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'empty.db'}"
+    # Percent signs in URLs must survive Alembic's ConfigParser interpolation.
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'empty%20.db'}"
     config = alembic_config(database_url)
     command.upgrade(config, "head")
     engine = create_engine(database_url)
@@ -41,21 +49,28 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         "ledger_postings",
         "api_idempotency_records",
         "outbox_events",
+        "storage_cleanup_events",
+        "storage_cleanup_objects",
         "provider_event_inbox",
+        "dead_letter_events",
+        "admin_operation_audits",
     } <= tables
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
     with engine.connect() as connection:
         triggers = set(
-            connection.scalars(
-                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-            )
+            connection.scalars(text("SELECT name FROM sqlite_master WHERE type = 'trigger'"))
         )
     assert {
         "ledger_postings_immutable_update",
         "ledger_postings_immutable_delete",
         "generation_quote_terms_immutable",
         "generation_quote_status_monotonic",
+        "generation_attempt_snapshot_immutable",
     } <= triggers
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
+            only_alembic_head(config)
+        )
 
     command.downgrade(config, "0001_stage_one")
     downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
@@ -117,6 +132,24 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         column["name"] for column in inspector.get_columns("generation_jobs")
     }
     assert {
+        "image_digest",
+        "worker_version",
+        "worker_commit",
+        "comfyui_version",
+        "comfyui_commit",
+        "workflow_version",
+        "workflow_hash",
+        "model_hashes_json",
+        "gpu_type",
+        "queue_ms",
+        "cold_start_ms",
+        "runtime_ms",
+        "billable_ms",
+        "cost_minor",
+        "cost_currency",
+        "cost_source",
+    } <= {column["name"] for column in inspector.get_columns("generation_attempts")}
+    assert {
         "user_id",
         "project_id",
         "status",
@@ -129,14 +162,14 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
         "uq_generation_batches_reservation_identity",
         "uq_generation_batches_reserved_tx_id",
     } <= {
-        constraint["name"]
-        for constraint in inspector.get_unique_constraints("generation_batches")
+        constraint["name"] for constraint in inspector.get_unique_constraints("generation_batches")
     }
     assert "uq_generation_jobs_standalone_reserved_tx_id" in {
         index["name"] for index in inspector.get_indexes("generation_jobs")
     }
     assert {
         "job_id",
+        "attempt_id",
         "idempotency_key",
         "status",
         "attempt_count",
@@ -147,9 +180,42 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     assert {
         "uq_outbox_events_job_event",
         "uq_outbox_events_idempotency_key",
-    } <= {
-        constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")
+    } <= {constraint["name"] for constraint in inspector.get_unique_constraints("outbox_events")}
+    assert "fk_outbox_events_attempt_job" in {
+        constraint["name"] for constraint in inspector.get_foreign_keys("outbox_events")
     }
+    assert "ix_outbox_events_attempt_id" in {
+        index["name"] for index in inspector.get_indexes("outbox_events")
+    }
+    assert "ck_outbox_events_cancel_attempt" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("outbox_events")
+    }
+    assert {"status", "deleted_at"} <= {
+        column["name"] for column in inspector.get_columns("projects")
+    }
+    assert "ck_projects_deletion_state" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("projects")
+    }
+    assert {
+        "project_id",
+        "idempotency_key",
+        "status",
+        "attempt_count",
+        "next_attempt_at",
+        "locked_at",
+        "lock_token",
+        "published_at",
+        "last_error",
+    } <= {column["name"] for column in inspector.get_columns("storage_cleanup_events")}
+    assert {
+        "event_id",
+        "object_key",
+        "object_kind",
+        "status",
+        "attempt_count",
+        "cleaned_at",
+        "last_error",
+    } <= {column["name"] for column in inspector.get_columns("storage_cleanup_objects")}
     assert {
         "provider_code",
         "external_event_id",

@@ -52,6 +52,8 @@ class StorageClaim:
 
 
 class ObjectStorage(Protocol):
+    def ready(self) -> bool: ...
+
     def put(
         self,
         claim: StorageClaim,
@@ -92,6 +94,8 @@ class RemoteObjectBackend(Protocol):
     def stat(self, key: str) -> ObjectStat | None: ...
 
     def delete(self, key: str) -> None: ...
+
+    def ready(self) -> bool: ...
 
 
 def _utc_now() -> datetime:
@@ -333,6 +337,9 @@ class LocalObjectStorage(ClaimingObjectStorage):
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
+    def ready(self) -> bool:
+        return self.root.is_dir()
+
     def _path_for(self, key: str) -> Path:
         path = (self.root / _valid_object_key(key)).resolve()
         if self.root not in path.parents:
@@ -378,6 +385,9 @@ class RemoteObjectStorage(ClaimingObjectStorage):
     ) -> None:
         super().__init__(claim_secret, clock=clock)
         self._backend = backend
+
+    def ready(self) -> bool:
+        return self._backend.ready()
 
     def _put_bytes(self, key: str, content: bytes, mime_type: str) -> None:
         self._backend.put(key, content, mime_type)

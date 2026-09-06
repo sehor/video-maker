@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-factory.invalid/contracts/worker-comfyui-request-v1.schema.json",
+  "title": "Fixed 720p worker-comfyui request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "attempt_id",
+    "workflow_id",
+    "prompt",
+    "duration_ms",
+    "aspect_ratio",
+    "resolution",
+    "input_claim",
+    "output_claim",
+    "callback_claim"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "format": "uuid" },
+    "attempt_id": { "type": "string", "format": "uuid" },
+    "workflow_id": { "const": "fast_wan_i2v_720_v1" },
+    "prompt": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "duration_ms": { "const": 5000 },
+    "aspect_ratio": { "enum": ["16:9", "9:16"] },
+    "resolution": { "const": "720p" },
+    "input_claim": { "$ref": "#/$defs/claim" },
+    "output_claim": { "$ref": "#/$defs/claim" },
+    "callback_claim": { "$ref": "#/$defs/claim" }
+  },
+  "$defs": {
+    "claim": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 4096,
+      "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"
+    }
+  }
+}
+

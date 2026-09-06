@@ -18,7 +18,7 @@ from app.models import (
     SettlementStatus,
     WalletBalance,
 )
-from app.provider_execution import GenerationExecutionService
+from app.provider_execution import GenerationExecutionService, ProviderExecutionStep
 from tests.test_mock_jobs import create_shot
 
 
@@ -53,7 +53,8 @@ def quote(client: TestClient, shot_id: str, tier: str = "FAST") -> dict:
 def submit(client: TestClient, shot_id: str, quote_id: str, mode: str = "success"):
     return client.post(
         "/v1/generations",
-        json={"shot_id": shot_id, "quote_id": quote_id, "mock_mode": mode},
+        headers={"x-test-generation-modes": mode},
+        json={"shot_id": shot_id, "quote_id": quote_id},
     )
 
 
@@ -66,7 +67,7 @@ def test_quote_snapshot_keeps_its_price_when_catalog_changes(
     client: TestClient, monkeypatch
 ) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -180,7 +181,7 @@ def test_final_failure_releases_reserved_seconds_once(client: TestClient) -> Non
 
 def test_insufficient_balance_rolls_back_quote_and_job(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -198,7 +199,7 @@ def test_insufficient_balance_rolls_back_quote_and_job(client: TestClient, monke
 
 def test_competing_submissions_cannot_overdraw(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -236,7 +237,7 @@ def test_grant_idempotency_key_rejects_different_amount(client: TestClient) -> N
 
 def test_quote_cannot_cross_user_boundary(client: TestClient, monkeypatch) -> None:
     async def stay_queued(self, job_id):
-        return None
+        return ProviderExecutionStep(is_complete=True, poll_count=0)
 
     monkeypatch.setattr(GenerationExecutionService, "execute", stay_queued)
     shot = create_shot(client)
@@ -244,7 +245,7 @@ def test_quote_cannot_cross_user_boundary(client: TestClient, monkeypatch) -> No
     response = client.post(
         "/v1/generations",
         headers={"x-test-user": "other"},
-        json={"shot_id": shot["id"], "quote_id": item["id"], "mock_mode": "success"},
+        json={"shot_id": shot["id"], "quote_id": item["id"]},
     )
     assert response.status_code == 404
 

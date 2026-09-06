@@ -1,5 +1,8 @@
+# Explicit integration stack only: --env-file .env.compose --profile integration.
+# Keep the existing project/volume names so opted-in local integration can reuse its data.
 services:
   postgres:
+    profiles: [integration]
     image: postgres:17.6-alpine
     restart: unless-stopped
     environment:
@@ -15,6 +18,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   hatchet-db-init:
+    profiles: [integration]
     image: postgres:17.6-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-video_factory}
@@ -31,6 +35,7 @@ services:
         condition: service_healthy
 
   hatchet:
+    profiles: [integration]
     image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.105.2
     restart: unless-stopped
     environment:
@@ -59,6 +64,7 @@ services:
       - hatchet-config:/config
 
   hatchet-token-init:
+    profiles: [integration]
     image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.105.2
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-video_factory}:${POSTGRES_PASSWORD:-video_factory_dev}@postgres:5432/hatchet?sslmode=disable
@@ -80,9 +86,13 @@ services:
       - hatchet-auth:/hatchet-auth
 
   api:
-    build: ./apps/api
+    profiles: [integration]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     environment:
+      WORKFLOW_BACKEND: hatchet
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-http://web:3000/api/auth/jwks}
       AUTH_ISSUER: ${AUTH_ISSUER:-http://localhost:3000}
@@ -93,44 +103,57 @@ services:
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
+      HATCHET_CLIENT_TLS_STRATEGY: none
       MOCK_PROVIDER_WEBHOOK_SECRET: ${MOCK_PROVIDER_WEBHOOK_SECRET:-development-only-mock-webhook-secret}
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      TEST_RUNTIME_ROOT: ${TEST_RUNTIME_ROOT:-/tmp/video-factory-tests}
+      PYTEST_ADDOPTS: ${PYTEST_ADDOPTS:--o cache_dir=/tmp/video-factory-pytest-cache}
+      RUFF_CACHE_DIR: ${RUFF_CACHE_DIR:-/tmp/video-factory-ruff-cache}
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
       hatchet-token-init:
         condition: service_completed_successfully
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
-      - ./apps/api:/app
-      - ./packages/api-client:/packages/api-client
       - local-storage:/data/storage
       - hatchet-auth:/hatchet-auth:ro
 
   hatchet-worker:
-    build: ./apps/api
+    profiles: [integration]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     environment:
+      WORKFLOW_BACKEND: hatchet
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://video_factory:video_factory_dev@postgres:5432/video_factory}
       STORAGE_ROOT: /data/storage
       STORAGE_CLAIM_SECRET: ${STORAGE_CLAIM_SECRET:-development-only-storage-claim-secret}
       HATCHET_CLIENT_TOKEN_FILE: /hatchet-auth/token
       HATCHET_CLIENT_HOST_PORT: hatchet:7077
       HATCHET_SERVER_URL: http://hatchet:8888
+      HATCHET_CLIENT_TLS_STRATEGY: none
       OUTBOX_DISPATCHER_ENABLED: "false"
     command: python -m app.worker
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
       hatchet-token-init:
         condition: service_completed_successfully
     volumes:
-      - ./apps/api:/app
       - local-storage:/data/storage
       - hatchet-auth:/hatchet-auth:ro
 
   web:
+    profiles: [integration]
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -141,20 +164,21 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-video-factory-api}
       NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8000}
       NUXT_PUBLIC_AUTH_BASE_URL: ${NUXT_PUBLIC_AUTH_BASE_URL:-http://localhost:3000}
-    command: sh -c "pnpm run auth:migrate && pnpm run dev --host 0.0.0.0"
+    command: sh -c "pnpm run auth:migrate && node .output/server/index.mjs"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "3000:3000"
-    volumes:
-      - ./apps/web:/workspace/apps/web
-      - ./packages/api-client:/workspace/packages/api-client
-      - web-node-modules:/workspace/node_modules
+      - "127.0.0.1:3000:3000"
 
 volumes:
   postgres-data:
   hatchet-config:
   hatchet-auth:
   local-storage:
-  web-node-modules:

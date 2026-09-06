@@ -84,6 +84,7 @@ class OutboxStatus(str, enum.Enum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
     PUBLISHED = "PUBLISHED"
+    DEAD_LETTER = "DEAD_LETTER"
 
 
 class ProviderEventInboxStatus(str, enum.Enum):
@@ -93,8 +94,33 @@ class ProviderEventInboxStatus(str, enum.Enum):
     IGNORED = "IGNORED"
 
 
+class DeadLetterSource(str, enum.Enum):
+    OUTBOX = "OUTBOX"
+    STORAGE_CLEANUP = "STORAGE_CLEANUP"
+
+
+class DeadLetterStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    REPLAYED = "REPLAYED"
+
+
 class ProjectAssetStatus(str, enum.Enum):
     READY = "READY"
+    DELETED = "DELETED"
+
+
+class ProjectStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    DELETED = "DELETED"
+
+
+class StorageCleanupObjectKind(str, enum.Enum):
+    ASSET = "ASSET"
+    OUTPUT = "OUTPUT"
+
+
+class StorageCleanupObjectStatus(str, enum.Enum):
+    PENDING = "PENDING"
     DELETED = "DELETED"
 
 
@@ -150,7 +176,14 @@ class ApiIdempotencyRecord(Base, TimestampMixin):
 
 class Project(Base, TimestampMixin):
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("id", "owner_id", name="uq_projects_id_owner_id"),)
+    __table_args__ = (
+        UniqueConstraint("id", "owner_id", name="uq_projects_id_owner_id"),
+        CheckConstraint(
+            "(status = 'ACTIVE' AND deleted_at IS NULL) OR "
+            "(status = 'DELETED' AND deleted_at IS NOT NULL)",
+            name="ck_projects_deletion_state",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(
@@ -158,6 +191,12 @@ class Project(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[ProjectStatus] = mapped_column(
+        Enum(ProjectStatus, native_enum=False, length=16),
+        default=ProjectStatus.ACTIVE,
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     shots: Mapped[list["Shot"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
@@ -165,6 +204,79 @@ class Project(Base, TimestampMixin):
     assets: Mapped[list["ProjectAsset"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+
+class StorageCleanupEvent(Base, TimestampMixin):
+    __tablename__ = "storage_cleanup_events"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_storage_cleanup_events_project"),
+        UniqueConstraint("idempotency_key", name="uq_storage_cleanup_events_idempotency_key"),
+        CheckConstraint("attempt_count >= 0", name="ck_storage_cleanup_events_attempt_count"),
+        CheckConstraint(
+            "status != 'PROCESSING' OR (locked_at IS NOT NULL AND lock_token IS NOT NULL)",
+            name="ck_storage_cleanup_events_processing_lease",
+        ),
+        CheckConstraint(
+            "status != 'PUBLISHED' OR published_at IS NOT NULL",
+            name="ck_storage_cleanup_events_published_at",
+        ),
+        Index("ix_storage_cleanup_events_dispatchable", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[OutboxStatus] = mapped_column(
+        Enum(OutboxStatus, native_enum=False, length=16),
+        default=OutboxStatus.PENDING,
+        nullable=False,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lock_token: Mapped[str | None] = mapped_column(String(36))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    objects: Mapped[list["StorageCleanupObject"]] = relationship(
+        back_populates="event",
+        cascade="all, delete-orphan",
+        order_by="StorageCleanupObject.object_key",
+    )
+
+
+class StorageCleanupObject(Base, TimestampMixin):
+    __tablename__ = "storage_cleanup_objects"
+    __table_args__ = (
+        UniqueConstraint("event_id", "object_key", name="uq_storage_cleanup_objects_event_key"),
+        CheckConstraint("attempt_count >= 0", name="ck_storage_cleanup_objects_attempt_count"),
+        Index("ix_storage_cleanup_objects_event_status", "event_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("storage_cleanup_events.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    object_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_kind: Mapped[StorageCleanupObjectKind] = mapped_column(
+        Enum(StorageCleanupObjectKind, native_enum=False, length=16), nullable=False
+    )
+    status: Mapped[StorageCleanupObjectStatus] = mapped_column(
+        Enum(StorageCleanupObjectStatus, native_enum=False, length=16),
+        default=StorageCleanupObjectStatus.PENDING,
+        nullable=False,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    event: Mapped[StorageCleanupEvent] = relationship(back_populates="objects")
 
 
 class Shot(Base, TimestampMixin):
@@ -454,20 +566,14 @@ class GenerationBatch(Base, TimestampMixin):
             name="fk_generation_batches_project_owner",
             ondelete="CASCADE",
         ),
-        UniqueConstraint(
-            "id", "user_id", "project_id", name="uq_generation_batches_identity"
-        ),
-        UniqueConstraint(
-            "id", "reserved_tx_id", name="uq_generation_batches_reservation_identity"
-        ),
+        UniqueConstraint("id", "user_id", "project_id", name="uq_generation_batches_identity"),
+        UniqueConstraint("id", "reserved_tx_id", name="uq_generation_batches_reservation_identity"),
         UniqueConstraint("reserved_tx_id", name="uq_generation_batches_reserved_tx_id"),
         CheckConstraint(
             "status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'PARTIAL', 'FAILED_FINAL')",
             name="ck_generation_batches_status",
         ),
-        CheckConstraint(
-            "reserved_amount_ms > 0", name="ck_generation_batches_reserved_amount_ms"
-        ),
+        CheckConstraint("reserved_amount_ms > 0", name="ck_generation_batches_reserved_amount_ms"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -607,9 +713,19 @@ class GenerationJob(Base, TimestampMixin):
 class OutboxEvent(Base, TimestampMixin):
     __tablename__ = "outbox_events"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["attempt_id", "job_id"],
+            ["generation_attempts.id", "generation_attempts.job_id"],
+            name="fk_outbox_events_attempt_job",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint("job_id", "event_type", name="uq_outbox_events_job_event"),
         UniqueConstraint("idempotency_key", name="uq_outbox_events_idempotency_key"),
         CheckConstraint("attempt_count >= 0", name="ck_outbox_events_attempt_count"),
+        CheckConstraint(
+            "event_type != 'provider.cancel.requested' OR attempt_id IS NOT NULL",
+            name="ck_outbox_events_cancel_attempt",
+        ),
         CheckConstraint(
             "status != 'PROCESSING' OR (locked_at IS NOT NULL AND lock_token IS NOT NULL)",
             name="ck_outbox_events_processing_lease",
@@ -625,6 +741,7 @@ class OutboxEvent(Base, TimestampMixin):
     job_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("generation_jobs.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -643,7 +760,7 @@ class OutboxEvent(Base, TimestampMixin):
     workflow_id: Mapped[str | None] = mapped_column(String(255))
     last_error: Mapped[str | None] = mapped_column(Text)
 
-    job: Mapped[GenerationJob] = relationship(back_populates="outbox_events")
+    job: Mapped[GenerationJob] = relationship(back_populates="outbox_events", foreign_keys=[job_id])
 
 
 class GenerationAttempt(Base, TimestampMixin):
@@ -657,6 +774,19 @@ class GenerationAttempt(Base, TimestampMixin):
             name="uq_generation_attempt_provider_job",
         ),
         CheckConstraint("attempt_no >= 1", name="ck_generation_attempts_attempt_no"),
+        CheckConstraint(
+            "(queue_ms IS NULL OR queue_ms >= 0) AND "
+            "(cold_start_ms IS NULL OR cold_start_ms >= 0) AND "
+            "(runtime_ms IS NULL OR runtime_ms >= 0) AND "
+            "(billable_ms IS NULL OR billable_ms >= 0)",
+            name="ck_generation_attempts_timings_nonnegative",
+        ),
+        CheckConstraint(
+            "(cost_minor IS NULL AND cost_currency IS NULL AND cost_source IS NULL) OR "
+            "(cost_minor >= 0 AND cost_currency IS NOT NULL AND "
+            "cost_source IN ('ACTUAL', 'ESTIMATE', 'SIMULATED'))",
+            name="ck_generation_attempts_cost_snapshot",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -669,6 +799,17 @@ class GenerationAttempt(Base, TimestampMixin):
     provider_job_id: Mapped[str | None] = mapped_column(String(255))
     workflow_version: Mapped[str] = mapped_column(String(100), default="mock:v1", nullable=False)
     worker_version: Mapped[str | None] = mapped_column(String(100))
+    image_digest: Mapped[str | None] = mapped_column(String(80))
+    worker_commit: Mapped[str | None] = mapped_column(String(64))
+    comfyui_version: Mapped[str | None] = mapped_column(String(100))
+    comfyui_commit: Mapped[str | None] = mapped_column(String(64))
+    workflow_hash: Mapped[str | None] = mapped_column(String(64))
+    model_hashes_json: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    gpu_type: Mapped[str | None] = mapped_column(String(100))
+    queue_ms: Mapped[int | None] = mapped_column(BigInteger)
+    cold_start_ms: Mapped[int | None] = mapped_column(BigInteger)
+    runtime_ms: Mapped[int | None] = mapped_column(BigInteger)
+    billable_ms: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[AttemptStatus] = mapped_column(
         Enum(AttemptStatus, native_enum=False, length=24),
         default=AttemptStatus.CREATED,
@@ -679,6 +820,7 @@ class GenerationAttempt(Base, TimestampMixin):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cost_minor: Mapped[int | None] = mapped_column(BigInteger)
     cost_currency: Mapped[str | None] = mapped_column(String(3))
+    cost_source: Mapped[str | None] = mapped_column(String(16))
     raw_metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     job: Mapped[GenerationJob] = relationship(back_populates="attempts")
@@ -728,6 +870,57 @@ class ProviderEventInbox(Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lock_token: Mapped[str | None] = mapped_column(String(36))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DeadLetterEvent(Base):
+    __tablename__ = "dead_letter_events"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", name="uq_dead_letter_events_source"),
+        CheckConstraint("attempt_count > 0", name="ck_dead_letter_events_attempt_count"),
+        CheckConstraint("cycle_count > 0", name="ck_dead_letter_events_cycle_count"),
+        Index("ix_dead_letter_events_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    source_type: Mapped[DeadLetterSource] = mapped_column(
+        Enum(DeadLetterSource, native_enum=False, length=24), nullable=False
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    cycle_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_error: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[DeadLetterStatus] = mapped_column(
+        Enum(DeadLetterStatus, native_enum=False, length=16),
+        default=DeadLetterStatus.OPEN,
+        nullable=False,
+    )
+    replayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AdminOperationAudit(Base):
+    __tablename__ = "admin_operation_audits"
+    __table_args__ = (
+        UniqueConstraint("operation_key", name="uq_admin_operation_audits_operation_key"),
+        Index("ix_admin_operation_audits_target", "target_type", "target_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("app_users.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    operation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class GenerationOutput(Base, TimestampMixin):

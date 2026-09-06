@@ -1,26 +1,31 @@
-.PHONY: dev stop migrate test lint generate-client e2e
+# Optional make aliases. PowerShell 7 is the primary Windows entry point.
+.DEFAULT_GOAL := help
+.PHONY: help dev check migrate api web worker test test-api test-web lint build typecheck generate-client e2e check-baseline compose-dev compose-up compose-start compose-stop compose-build compose-config
 
-dev:
-	docker compose up --build
+help dev:
+	@echo "Windows: pwsh -NoProfile -File scripts/dev.ps1 check"
+	@echo "Run scripts/dev.ps1 api and scripts/dev.ps1 web in separate terminals. Ctrl+C stops each."
 
-stop:
-	docker compose down
+check migrate api web worker test test-api test-web lint build typecheck generate-client e2e:
+	pwsh -NoProfile -File scripts/dev.ps1 $@
 
-migrate:
-	docker compose run --rm api alembic upgrade head
-	docker compose run --rm web npm run auth:migrate
+check-baseline:
+	uv run --project apps/api --no-sync python scripts/check_repository_baseline.py
 
-test:
-	docker compose run --rm api pytest -q
-	docker compose run --rm web npm run test
+# Explicit integration only; no source mounts or hot reload. Native targets never use this.
+COMPOSE = docker compose --env-file .env.compose --profile integration
 
-lint:
-	docker compose run --rm api ruff check app tests
-	docker compose run --rm web npm run lint
+compose-config:
+	$(COMPOSE) config --quiet
 
-generate-client:
-	docker compose run --rm api python scripts/export_openapi.py
-	docker compose run --rm web npm run generate:client
+compose-build:
+	$(COMPOSE) build
 
-e2e:
-	docker compose run --rm web npm run test:e2e
+compose-up compose-dev:
+	$(COMPOSE) up -d --wait
+
+compose-start:
+	$(COMPOSE) start
+
+compose-stop:
+	$(COMPOSE) stop

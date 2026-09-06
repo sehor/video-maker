@@ -5,9 +5,70 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  native-checks:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      WORKFLOW_BACKEND: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.11.19'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Install locked dependencies and host FFmpeg
+        run: |
+          uv sync --project apps/api --locked --extra dev
+          pnpm install --frozen-lockfile
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Repository and environment boundaries
+        run: |
+          uv run --project apps/api --no-sync python scripts/check_repository_baseline.py
+          uv run --project apps/api --no-sync python -m unittest discover -s tests
+          uv run --project apps/api --no-sync python workers/runpod-comfyui/contract/validate.py --root .
+      - name: API SQLite unit tests and lint
+        working-directory: apps/api
+        run: |
+          uv run --no-sync pytest -q --tb=short -rs
+          uv run --no-sync ruff check app tests ../../scripts/dev.py ../../tests/test_environment_boundaries.py
+      - name: Host FFmpeg build inventory
+        working-directory: apps/api
+        run: uv run --no-sync python scripts/export_ffmpeg_build.py
+      - name: Web unit tests, lint, typecheck and production build
+        run: |
+          pnpm test
+          pnpm lint
+          pnpm typecheck
+          pnpm build
+      - name: OpenAPI client is current
+        run: |
+          cd apps/api
+          uv run --no-sync python scripts/export_openapi.py
+          cd ../..
+          pnpm --filter @video-factory/api-client check
+          git diff --exit-code -- packages/api-client
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # An ephemeral CI project only; never reuse or remove a developer's volumes.
+      COMPOSE_PROJECT_NAME: video-maker-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMPOSE_FILE: compose.yaml
+      COMPOSE_ENV_FILES: .env.compose.example
+      COMPOSE_PROFILES: integration
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -16,34 +77,80 @@ jobs:
         with:
           node-version: 22.19.0
           cache: pnpm
-      - name: Build services
-        run: docker compose build
+      - name: Validate and build service images
+        run: |
+          docker compose config --quiet
+          docker compose build api hatchet-worker web
       - name: Install E2E dependencies
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter @video-factory/web exec playwright install --with-deps chromium
-      - name: API tests
-        run: docker compose run --rm api pytest -q
-      - name: API lint
-        run: docker compose run --rm api ruff check app tests
-      - name: FFmpeg build and license inventory
-        run: docker compose run --rm api python scripts/export_ffmpeg_build.py
-      - name: Web unit tests
-        run: docker compose run --rm web pnpm run test
-      - name: Web lint and build
+      - name: PostgreSQL empty database migration and head
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://video_factory:change-me-compose-only@postgres:5432/video_factory_ci_test
         run: |
-          docker compose run --rm web pnpm run lint
-          docker compose run --rm web pnpm run build
-      - name: OpenAPI client is current
+          docker compose up -d --wait --wait-timeout 90 postgres
+          docker compose exec -T postgres \
+            psql -U video_factory -d postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE video_factory_ci_test"
+          docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
+            -e DATABASE_URL="$TEST_DATABASE_URL" api alembic upgrade head
+          docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
+            -e DATABASE_URL="$TEST_DATABASE_URL" api python scripts/check_database_head.py
+      - name: PostgreSQL concurrency regressions, three rounds
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://video_factory:change-me-compose-only@postgres:5432/video_factory_ci_test
         run: |
-          docker compose run --rm api python scripts/export_openapi.py
-          docker compose run --rm web pnpm run generate:client
-          git diff --exit-code -- packages/api-client
-      - name: End-to-end business loop
+          for run in 1 2 3; do
+            echo "PostgreSQL concurrency run ${run}/3"
+            docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
+              -e TEST_DATABASE_URL="$TEST_DATABASE_URL" api pytest -q \
+              tests/test_quote_ledger.py::test_competing_submissions_cannot_overdraw \
+              tests/test_batch_atomic.py::test_competing_batches_cannot_overdraw_wallet
+          done
+      - name: Container FFmpeg build and license inventory
+        run: docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local api python scripts/export_ffmpeg_build.py
+      - name: Start Hatchet, API and built Web
+        run: docker compose up -d --wait --wait-timeout 180
+      - name: Hatchet duplicate-start contract
         run: |
-          docker compose up -d
-          timeout 120 sh -c 'until curl -fsS http://localhost:3000/login >/dev/null && curl -fsS http://localhost:8000/healthz >/dev/null; do sleep 2; done'
-          E2E_BASE_URL=http://localhost:3000 pnpm --filter @video-factory/web test:e2e
-      - name: Stop services
+          docker compose run --rm --no-deps -e RUN_HATCHET_INTEGRATION=1 \
+            api pytest -q tests/test_hatchet_integration.py
+      - name: End-to-end business loop against built Web
+        env:
+          E2E_BASE_URL: http://localhost:3000
+        run: pnpm --filter @video-factory/web test:e2e
+      - name: Capture integration diagnostics
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          docker compose ps -a > artifacts/compose-status.txt
+          docker compose logs --no-color --tail 200 api hatchet-worker web postgres > artifacts/services.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: integration-diagnostics
+          path: |
+            artifacts/
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 3
+      - name: Remove only this ephemeral CI project
         if: always()
-        run: docker compose down -v
+        run: |
+          case "$COMPOSE_PROJECT_NAME" in
+            video-maker-ci-*) docker compose down -v --remove-orphans ;;
+            *) echo "Refusing to remove an unexpected Compose project"; exit 1 ;;
+          esac
+
+  # Preserve the previous required-check name while both independent jobs must succeed.
+  test:
+    runs-on: ubuntu-24.04
+    needs: [native-checks, integration]
+    if: always()
+    steps:
+      - name: Require both check groups
+        env:
+          NATIVE_RESULT: ${{ needs.native-checks.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: test "$NATIVE_RESULT" = success && test "$INTEGRATION_RESULT" = success

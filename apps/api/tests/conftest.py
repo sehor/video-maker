@@ -7,6 +7,12 @@ import pytest
 from fastapi import Header
 from fastapi.testclient import TestClient
 
+api_root = Path(__file__).resolve().parents[1]
+test_runtime_root = Path(
+    os.environ.get("TEST_RUNTIME_ROOT", api_root / ".test-tmp")
+).resolve()
+test_runtime_root.mkdir(parents=True, exist_ok=True)
+
 test_database_url = os.environ.get("TEST_DATABASE_URL")
 if test_database_url:
     database_name = test_database_url.rsplit("/", 1)[-1].split("?", 1)[0]
@@ -14,20 +20,28 @@ if test_database_url:
         raise RuntimeError("TEST_DATABASE_URL must target a database ending in _test")
     os.environ["DATABASE_URL"] = test_database_url
 else:
-    os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./test.db"
-os.environ["STORAGE_ROOT"] = "./test-storage"
+    os.environ["DATABASE_URL"] = (
+        f"sqlite+pysqlite:///{test_runtime_root / 'test.db'}"
+    )
+os.environ["STORAGE_ROOT"] = str(test_runtime_root / "storage")
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
+os.environ["RECONCILER_ENABLED"] = "false"
+os.environ["WORKFLOW_BACKEND"] = "local"
 os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"
+os.environ["ADMIN_AUTH_SUBJECTS"] = "admin-user"
 
+from app import main, public_api  # noqa: E402
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.db import Base, engine  # noqa: E402
+from app.generation_options import (  # noqa: E402
+    InternalGenerationOptions,
+    get_internal_generation_options,
+)
+from app.local_workflow import LocalWorkflowStarter  # noqa: E402
 from app.main import app  # noqa: E402
-from app.outbox import DispatchResult, OutboxDispatcher  # noqa: E402
-from app.provider_execution import GenerationExecutionService  # noqa: E402
-from app.storage import LocalObjectStorage  # noqa: E402
-from app.workflow import WorkflowStartRequest, WorkflowStartResult  # noqa: E402
+from app.outbox import DispatchResult  # noqa: E402
 
 get_settings.cache_clear()
 
@@ -37,6 +51,16 @@ def test_identity(x_test_user: Annotated[str | None, Header()] = None) -> Identi
 
 
 app.dependency_overrides[get_identity] = test_identity
+
+
+def test_generation_options(
+    x_test_generation_modes: Annotated[str | None, Header()] = None,
+) -> InternalGenerationOptions:
+    modes = tuple(x_test_generation_modes.split(",")) if x_test_generation_modes else ()
+    return InternalGenerationOptions(modes=modes)  # type: ignore[arg-type]
+
+
+app.dependency_overrides[get_internal_generation_options] = test_generation_options
 
 
 @pytest.fixture(autouse=True)
@@ -50,34 +74,34 @@ def clean_database(tmp_path: Path):
 
 
 @pytest.fixture
-def raw_client() -> TestClient:
+def raw_client(monkeypatch) -> TestClient:
+    # Use the same runner/settings on the TestClient lifespan loop and API dispatch path.
+    settings = get_settings()
+    runner = LocalWorkflowStarter(settings)
+    monkeypatch.setattr(main, "settings", settings)
+    monkeypatch.setattr(main, "workflow_starter", runner)
+    monkeypatch.setattr(public_api, "workflow_starter", runner)
     with TestClient(app) as test_client:
         yield test_client
 
 
-class InlineWorkflowStarter:
-    """Runs the Hatchet child boundary in-process for Docker-free unit tests."""
-
-    async def start(self, request: WorkflowStartRequest) -> WorkflowStartResult:
-        settings = get_settings()
-        store = LocalObjectStorage(
-            settings.storage_root,
-            settings.storage_claim_secret.get_secret_value().encode(),
-        )
-        executor = GenerationExecutionService(store)
-        await executor.execute(request.job_id)
-        return WorkflowStartResult(workflow_id=f"test:{request.idempotency_key}")
+async def dispatch_local_outbox() -> DispatchResult:
+    result = await public_api.dispatch_generation_outbox()
+    runner = public_api.workflow_starter
+    assert isinstance(runner, LocalWorkflowStarter)
+    await asyncio.wait_for(runner.wait_idle(), timeout=30)
+    return result
 
 
 @pytest.fixture
 def client(raw_client: TestClient) -> TestClient:
     original_post = raw_client.post
-    starter = InlineWorkflowStarter()
 
     def post_and_dispatch(url: str, *args, **kwargs):
         response = original_post(url, *args, **kwargs)
         if url == "/v1/generations" and response.status_code == 202:
-            result = asyncio.run(OutboxDispatcher(SessionLocal, starter).dispatch_once())
+            assert raw_client.portal is not None
+            result = raw_client.portal.call(dispatch_local_outbox)
             assert result in {DispatchResult.IDLE, DispatchResult.PUBLISHED}
         return response
 

@@ -44,17 +44,9 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); if (videoUrl.value) URL.
         <div v-else-if="job.status === 'FAILED_FINAL'">
           <p>{{ job.error_message }}</p><code>{{ job.failure_code }}</code>
         </div>
-        <p v-else-if="job.status === 'CANCEL_REQUESTED'" class="muted">已请求取消，正在等待 Provider 确认终止。</p>
+        <p v-else-if="job.status === 'CANCEL_REQUESTED'" class="muted">已请求取消，正在等待任务终止。</p>
         <p v-else-if="job.status === 'CANCELLED'" class="muted">任务已取消，不会产生输出。</p>
-        <p v-else class="muted">正在等待 Mock Provider…</p>
-      </section>
-      <section class="panel">
-        <h2>事件</h2>
-        <div class="list">
-          <div v-for="event in (job.events || [])" :key="event.id" class="row">
-            <span>{{ event.event_type }}</span><span class="muted">{{ event.from_status || '—' }} → {{ event.to_status }}</span>
-          </div>
-        </div>
+        <p v-else class="muted">正在生成视频…</p>
       </section>
     </div>
   </div>

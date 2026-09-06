@@ -6,6 +6,9 @@
   "scripts": {
     "test": "pnpm --filter @video-factory/web test",
     "lint": "pnpm --filter @video-factory/web lint",
+    "build": "pnpm --filter @video-factory/web build",
+    "typecheck": "pnpm --filter @video-factory/web exec vue-tsc --noEmit",
+    "test:e2e": "pnpm --filter @video-factory/web test:e2e",
     "generate:client": "pnpm --filter @video-factory/api-client generate"
   },
   "engines": { "node": ">=22" }

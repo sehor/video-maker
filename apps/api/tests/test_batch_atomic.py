@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -20,8 +19,8 @@ from app.models import (
     QuoteStatus,
     SettlementStatus,
 )
-from app.outbox import DispatchResult, OutboxDispatcher
-from tests.conftest import InlineWorkflowStarter
+from app.outbox import DispatchResult
+from tests.conftest import dispatch_local_outbox
 
 
 def create_project_shots(client: TestClient, count: int) -> list[dict]:
@@ -69,14 +68,8 @@ def quote(client: TestClient, shot_id: str, tier: str = "FAST") -> dict:
     return response.json()
 
 
-def batch_payload(quotes: list[dict], modes: list[str] | None = None) -> dict:
-    modes = modes or ["success"] * len(quotes)
-    return {
-        "items": [
-            {"quote_id": item["id"], "mock_mode": mode}
-            for item, mode in zip(quotes, modes, strict=True)
-        ]
-    }
+def batch_payload(quotes: list[dict]) -> dict:
+    return {"items": [{"quote_id": item["id"]} for item in quotes]}
 
 
 def test_batch_creates_jobs_reserve_and_outboxes_in_one_transaction(
@@ -242,14 +235,15 @@ def test_batch_jobs_settle_and_release_independently(client: TestClient) -> None
     quotes = [quote(client, shot["id"]) for shot in shots]
     response = client.post(
         "/v1/batches",
-        json=batch_payload(quotes, ["success", "failure"]),
+        headers={"x-test-generation-modes": "success,failure"},
+        json=batch_payload(quotes),
     )
     assert response.status_code == 202
     batch_id = response.json()["id"]
-    dispatcher = OutboxDispatcher(SessionLocal, InlineWorkflowStarter())
-    assert asyncio.run(dispatcher.dispatch_once()) == DispatchResult.PUBLISHED
-    assert asyncio.run(dispatcher.dispatch_once()) == DispatchResult.PUBLISHED
-    assert asyncio.run(dispatcher.dispatch_once()) == DispatchResult.IDLE
+    assert client.portal is not None
+    assert client.portal.call(dispatch_local_outbox) == DispatchResult.PUBLISHED
+    assert client.portal.call(dispatch_local_outbox) == DispatchResult.PUBLISHED
+    assert client.portal.call(dispatch_local_outbox) == DispatchResult.IDLE
 
     batch = client.get(f"/v1/batches/{batch_id}").json()
     assert batch["status"] == "PARTIAL"

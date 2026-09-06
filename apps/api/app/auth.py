@@ -78,3 +78,12 @@ def get_current_user(
 
 
 CurrentUser = Annotated[AppUser, Depends(get_current_user)]
+
+
+def get_admin_user(user: CurrentUser) -> AppUser:
+    if user.auth_subject not in get_settings().admin_auth_subjects:
+        raise ApiError(403, "ADMIN_REQUIRED", "需要管理员权限")
+    return user
+
+
+AdminUser = Annotated[AppUser, Depends(get_admin_user)]

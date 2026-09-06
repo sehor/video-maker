@@ -1,6 +1,6 @@
-# AI 视频镜头工厂开发文档 v2.0
+# AI 视频镜头工厂开发文档 v2.1
 
-> 日期：2026-08-17｜形式：分阶段、按需加载  
+> 日期：2026-08-31｜形式：分阶段、按需加载
 > 产品：只做短剧／漫剧视频镜头；只交付 720p／1080p；不做图片、2K／4K／8K和 AI 超分。
 
 ## 使用规则
@@ -13,8 +13,10 @@
 
 修改数据库、状态机、账本或 Provider／Worker 协议时，再加载 `90_核心数据模型与接口契约.md`；新增依赖、模型、节点或 Worker 镜像时，再加载 `91_外部依赖与许可证.md`。不要一次加载全部文件。
 
-操作 WSL2、Docker、Compose、容器或本地数据库时，先加载
-`计划二_WSL2_Docker_安装与维护.md`，从现有容器和 named volume 的预检开始。
+默认使用 Windows 原生环境，按根 [README](../README.md) 的 PowerShell 命令开发。
+操作本地数据库前加载 `计划二_WSL2_Docker_安装与维护.md` 的原生预检分流，
+使用 `scripts/dev.ps1 check` 核对 Windows PostgreSQL，不启动 WSL 或检查容器。
+只有明确执行独立 WSL2/Docker/Compose 集成任务时，才进入该文档的容器预检，复用现有资源。
 
 ## 文件目录
 
@@ -28,7 +30,22 @@
 | `05_阶段五_多供应商与规模化.md` | Vast、商业 API、New-API、1080p、SkyPilot |
 | `90_核心数据模型与接口契约.md` | 表、约束、状态机和统一协议 |
 | `91_外部依赖与许可证.md` | 依赖选择、版本锁定和许可证治理 |
-| `计划二_WSL2_Docker_安装与维护.md` | 本机 WSL2 Docker 基线、永久容器、日常启动与恢复 |
+| `计划二_WSL2_Docker_安装与维护.md` | 原生数据库预检分流；独立集成／发布的历史容器资源与维护，不是开发前置条件 |
+| `Windows原生开发环境改造计划.md` | 移除日常开发的 WSL/Docker 依赖，保留集成与发布容器边界 |
+| `runbooks/HatchetCloud_Windows集成.md` | 开发租户凭据、TLS、Windows Worker 与远程验收命令 |
+| `reports/WINDEV-04_HatchetCloud集成验证.md` | Cloud 模式离线验证结果及尚未完成的真实云验收 |
+| `reports/WINDEV-05_Compose隔离与CI验证.md` | 原生语言检查与容器集成分离、本机门禁结果和远程验证限制 |
+| `reports/WINDEV-06_Windows原生总验收.md` | 原生验收矩阵、实测证据、按需跳过项、限制与回滚点 |
+
+模拟控制面总验收见 `reports/SIM-05_模拟故障注入验收报告.md`；卡住任务、Dead Letter、
+Storage 清理和账本异常的恢复步骤见 `runbooks/模拟控制面故障恢复.md`。
+
+Windows 本地工作流的生命周期、去重、恢复边界和回归结果见
+`reports/WINDEV-02_LocalRunner验收.md`。
+
+Windows 原生命令、环境加载、数据库预检和隔离库启动验证见
+`reports/WINDEV-03_Windows原生命令验证.md`；用户授权后的本机开发库迁移与
+原生 API/Web 就绪验证已通过。
 
 架构决策记录位于 `docs/adr/`，依赖、模型和 custom node 的许可证台账位于
 `docs/licenses/`。新增或升级社区组件时必须同时更新对应 ADR 和台账。
