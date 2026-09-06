@@ -1,5 +1,6 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -205,8 +206,10 @@ def test_competing_submissions_cannot_overdraw(client: TestClient, monkeypatch) 
     shot = create_shot(client)
     grant(client, 2_000)
     quotes = [quote(client, shot["id"]) for _ in range(2)]
+    start = Barrier(2, timeout=10)
 
     def request(item: dict) -> tuple[int, str | None]:
+        start.wait()
         response = submit(client, shot["id"], item["id"])
         return response.status_code, response.json().get("error", {}).get("code")
 
@@ -263,3 +266,6 @@ def test_settle_and_release_are_mutually_exclusive(client: TestClient) -> None:
         with pytest.raises(ApiError) as error:
             finish_reservation(db, stored_job, settle=False)
         assert error.value.code == "LEDGER_ALREADY_FINALIZED"
+
+
+pytestmark = pytest.mark.database

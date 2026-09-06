@@ -164,3 +164,6 @@ def test_simulated_provider_cannot_persist_actual_cost(raw_client: TestClient) -
 def test_cost_and_timing_contracts_reject_floats(factory) -> None:
     with pytest.raises(ValueError):
         factory()
+
+
+pytestmark = pytest.mark.database

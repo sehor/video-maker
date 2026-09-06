@@ -405,7 +405,7 @@ class MockVideoProvider:
                 width=1280,
                 height=720,
                 fps=25,
-                codec="mpeg4",
+                codec="h264",
             ),
             metrics=self._metrics(),
             versions=self._versions(),

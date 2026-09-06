@@ -24,17 +24,7 @@ from app.routing import MOCK_ROUTE_VERSION, get_route_registry
 from app.workflow import HatchetWorkflowStarter, WorkflowStartRequest
 from tests.test_provider_routing import _quoted_shot
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.hatchet_cloud,
-    pytest.mark.skipif(os.environ.get("RUN_HATCHET_CLOUD") != "1",
-                       reason="opt in with scripts/dev.ps1 test-hatchet"),
-    pytest.mark.skipif(
-        not (os.environ.get("HATCHET_CLIENT_TOKEN", "").strip()
-             or os.environ.get("HATCHET_CLIENT_TOKEN_FILE")),
-        reason="Hatchet Cloud token is not configured",
-    ),
-]
+pytestmark = [pytest.mark.live, pytest.mark.database]
 
 
 @pytest.fixture

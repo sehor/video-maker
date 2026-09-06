@@ -120,7 +120,7 @@ def test_local_api_and_worker_import_without_hatchet_sdk(tmp_path: Path) -> None
         WORKFLOW_BACKEND="local",
         ENVIRONMENT="development",
         PYTHONPATH=str(Path(__file__).resolve().parents[1]),
-        DATABASE_URL="sqlite+pysqlite:///:memory:",
+        DATABASE_URL="postgresql+psycopg://unused:unused@127.0.0.1:1/unused_test",
         STORAGE_ROOT=str(tmp_path / "storage"),
     )
     code = """

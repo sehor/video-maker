@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { isTerminalStatus } from '../app/utils/jobs'
+import type { JobStatus } from '../app/types/domain'
 
 describe('isTerminalStatus', () => {
-  it('recognizes terminal states', () => {
-    expect(isTerminalStatus('SUCCEEDED')).toBe(true)
-    expect(isTerminalStatus('FAILED_FINAL')).toBe(true)
-    expect(isTerminalStatus('CANCELLED')).toBe(true)
-    expect(isTerminalStatus('EXPIRED')).toBe(true)
-    expect(isTerminalStatus('REJECTED_POLICY')).toBe(true)
-    expect(isTerminalStatus('RUNNING')).toBe(false)
-    expect(isTerminalStatus('CANCEL_REQUESTED')).toBe(false)
+  const expected = {
+    CREATED: false, RESERVED: false, QUEUED: false, ROUTING: false,
+    SUBMITTED: false, RUNNING: false, CANCEL_REQUESTED: false,
+    POSTPROCESSING: false, VALIDATING: false,
+    SUCCEEDED: true, FAILED_FINAL: true, CANCELLED: true, EXPIRED: true, REJECTED_POLICY: true
+  } satisfies Record<JobStatus, boolean>
+
+  it.each(Object.entries(expected))('%s terminal=%s', (status, terminal) => {
+    expect(isTerminalStatus(status as JobStatus)).toBe(terminal)
   })
 })

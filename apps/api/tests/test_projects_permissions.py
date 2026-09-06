@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -58,3 +59,6 @@ def test_error_has_machine_code_and_request_id(client: TestClient) -> None:
     body = response.json()["error"]
     assert body["code"] == "PROJECT_NOT_FOUND"
     assert body["request_id"]
+
+
+pytestmark = pytest.mark.database

@@ -1,6 +1,7 @@
 import json
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.db import SessionLocal
@@ -140,3 +141,6 @@ def test_public_json_hides_internal_diagnostics_but_admin_can_read_them(
     assert admin_attempt["model_hashes_json"] == {"model": "b" * 64}
     assert admin_attempt["gpu_type"] == "H100"
     assert admin_attempt["cost_minor"] == 123
+
+
+pytestmark = pytest.mark.database

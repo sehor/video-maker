@@ -1,6 +1,7 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 
 import pytest
 from fastapi.testclient import TestClient
@@ -282,8 +283,10 @@ def test_competing_batches_cannot_overdraw_wallet(client: TestClient) -> None:
     grant(client, 4_000)
     quotes = [quote(client, shot["id"]) for shot in shots]
     payloads = [batch_payload(quotes[:2]), batch_payload(quotes[2:])]
+    start = Barrier(2, timeout=10)
 
     def request(payload: dict) -> tuple[int, str | None]:
+        start.wait()
         response = client.post("/v1/batches", json=payload)
         return response.status_code, response.json().get("error", {}).get("code")
 
@@ -306,3 +309,6 @@ def test_competing_batches_cannot_overdraw_wallet(client: TestClient) -> None:
         assert db.scalar(
             select(func.count()).select_from(Quote).where(Quote.status == QuoteStatus.USED)
         ) == 2
+
+
+pytestmark = pytest.mark.database

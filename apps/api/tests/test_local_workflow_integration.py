@@ -157,3 +157,6 @@ def test_reconciler_resumes_published_work_after_runner_shutdown(raw_client, mon
         assert job["settlement_status"] == "SETTLED"
     finally:
         routes.activate(previous)
+
+
+pytestmark = [pytest.mark.database, pytest.mark.media]

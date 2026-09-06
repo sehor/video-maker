@@ -2,11 +2,10 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import MetaData, create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db import Base
+from app.db import SessionLocal
 from app.models import (
     AppUser,
     AttemptStatus,
@@ -25,21 +24,8 @@ from app.models import (
 
 @pytest.fixture
 def contract_db() -> Iterator[Session]:
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-
-    @event.listens_for(engine, "connect")
-    def enable_foreign_keys(dbapi_connection, _connection_record) -> None:
-        dbapi_connection.execute("PRAGMA foreign_keys=ON")
-
-    # PostgreSQL AddConstraint DDL changes per-constraint compilation state. Clone
-    # metadata so an earlier PostgreSQL fixture cannot suppress SQLite's inline FKs.
-    metadata = MetaData()
-    for table in Base.metadata.tables.values():
-        table.to_metadata(metadata)
-    metadata.create_all(engine)
-    with Session(engine) as session:
+    with SessionLocal() as session:
         yield session
-    engine.dispose()
 
 
 def seed_projects(db: Session) -> tuple[AppUser, AppUser, Project, Project, Shot, Shot]:
@@ -274,3 +260,6 @@ def test_shot_stores_specs_while_assets_and_references_have_separate_lifecycles(
     assert ShotReference.__table__.name == "shot_references"
     assert ProjectAsset.__table__.name == "project_assets"
     assert GenerationOutput.__table__.name == "generation_outputs"
+
+
+pytestmark = pytest.mark.database

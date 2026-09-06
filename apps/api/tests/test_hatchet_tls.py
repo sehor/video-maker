@@ -133,7 +133,7 @@ def test_ca_file_and_server_name_are_forwarded_and_conflicting_options_rejected(
         settings(hatchet_client_tls_strategy="none", hatchet_client_tls_server_name="host")
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows native signal bootstrap")
+@pytest.mark.windows
 def test_native_worker_and_sdk_listener_construct_and_handle_signals_without_network():
     from hatchet_sdk.worker.action_listener_process import WorkerActionListenerProcess
 
@@ -173,7 +173,7 @@ def test_native_worker_and_sdk_listener_construct_and_handle_signals_without_net
             signal.signal(sig, handler)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows native startup failure")
+@pytest.mark.windows
 def test_native_startup_failure_exits_with_error_instead_of_hanging():
     script = """
 from hatchet_sdk.worker.worker import Worker
@@ -197,7 +197,7 @@ create_generation_worker(create_hatchet_workflows(settings())).start()
     assert "startup-test-private-detail" not in result.stdout + result.stderr
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows spawned listener bootstrap")
+@pytest.mark.windows
 def test_listener_bootstrap_installs_signal_support_in_child_process():
     original_policy = asyncio.get_event_loop_policy()
     script = """

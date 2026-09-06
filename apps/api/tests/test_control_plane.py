@@ -1,9 +1,9 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.control_plane import ControlPlaneReconciler, ReadinessService
@@ -132,8 +132,8 @@ def test_reconciler_releases_stale_provider_lease_once() -> None:
         assert event.lock_token is None
 
 
-def test_readiness_distinguishes_dependencies_and_migration_head(tmp_path: Path) -> None:
-    engine = create_engine(f"sqlite+pysqlite:///{tmp_path / 'readiness.db'}")
+def test_readiness_distinguishes_dependencies_and_migration_head(migration_database) -> None:
+    _, engine = migration_database
     factory = sessionmaker(bind=engine)
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64))"))
@@ -165,3 +165,6 @@ def test_health_is_live_when_readiness_fails(raw_client: TestClient, monkeypatch
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"
     assert response.json()["checks"]["workflow"] is False
+
+
+pytestmark = pytest.mark.database

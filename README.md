@@ -59,31 +59,28 @@ dotenv 解析，不执行 PowerShell，不展开 `${...}`；密码中的 `$` 保
 
 先用已有 PostgreSQL 管理工具建立独立测试库，例如 `video-maker_test`，然后
 在 `.env` 填写完整的 `TEST_DATABASE_URL`。脚本不自动创建数据库；测试库名
-必须以 `_test` 结尾，且不能等于开发库名。**API 测试会重建测试库业务表**，
-不要与另一个测试进程共享该库。迁移测试内部的 SQLite 库位于临时目录。
-每次原生 API 测试的缓存与临时文件位于忽略提交的
-`apps/api/.test-tmp-native/run-*`，不会复用系统中旧的 pytest 临时目录。
+必须以 `_test` 结尾，且不能等于开发库名。所有数据库测试使用 **Windows PostgreSQL**，
+不回退 SQLite。每次运行创建独立 schema，使用 Alembic 真实迁移，结束只删除本次 schema；
+测试库已有表、开发数据和其他测试运行不受影响。缓存、日志及 JUnit 报告写入 `.test-runs/`。
 
 ```powershell
-./scripts/dev.ps1 test         # PostgreSQL API 回归 + Web 单元测试
-./scripts/dev.ps1 test-api     # 只跑 API；后面可追加 pytest 文件或 -k 参数
-./scripts/dev.ps1 test-web
+pnpm test                     # 全部 Python（含仓库脚本）+ Web 单元测试
+pnpm test:unit                # 快速逻辑测试，不访问数据库、不解码媒体
+pnpm test:db                  # PostgreSQL 迁移、约束、业务和并发
+pnpm test:media               # 真实 FFmpeg/ffprobe 和媒体集成
+pnpm test:e2e                 # 独立 schema、临时端口、自动管理原生 API/Web
+pnpm test:all                 # 包含 E2E 的完整测试
+./scripts/dev.ps1 test-api     # Python 测试兼容入口；可追加 -k 或文件
 ./scripts/dev.ps1 lint
 ./scripts/dev.ps1 typecheck
 ./scripts/dev.ps1 build
 ./scripts/dev.ps1 generate-client
-./scripts/dev.ps1 e2e          # 先启动 api/web；使用已安装的 Chromium
+./scripts/dev.ps1 e2e          # 等同 pnpm test:e2e；使用已安装的 Chromium
 ```
 
-E2E 默认访问 `http://localhost:3000`，会在当前开发库创建测试账号、项目与镜头，
-不会清理已有用户数据。没有浏览器时按上文安装一次；普通 E2E 不启动 Compose。
-Local 模式不需要运行 `worker`。可选的 Hatchet Cloud 模式见下节。
-
-总验收应使用独立 E2E 库：在已忽略的 `.env.local` 中将 `POSTGRES_DB`、
-`DATABASE_URL`、`BETTER_AUTH_DATABASE_URL` 对齐到专用 `_test` 库，并指定独立
-`STORAGE_ROOT`。迁移、API、Web 和 E2E 均加 `-EnvFile .env.local`，避免给开发库
-写入测试数据；不要让 API 单元测试同时重建这个 E2E 库。
-完整验收与按需跳过项见 [WINDEV-06 验收报告](docs/reports/WINDEV-06_Windows原生总验收.md)。
+E2E 自动运行 API/Better Auth 迁移、构建 Web、启动临时 Windows 进程，测试后关闭。
+不复用正在运行的开发服务。浏览器测试不自动重试，缺工具、缺数据库、测试跳过均不能当作通过。
+默认外部 Provider、Hatchet 和容器操作使用模拟；详见 [测试约定](docs/testing.md)。
 
 Makefile 的日常目标是 PowerShell 入口的别名，默认目标只显示帮助。
 以下容器操作仅供独立集成／发布验证，不属于 Windows 原生开发的安装、启动或验收步骤。
@@ -106,12 +103,9 @@ Makefile 提供 `compose-config`、`compose-build`、`compose-up`、`compose-sta
 容器不挂载源码、不提供热更新，Web 运行构建后的 Nitro 服务；本地开发继续使用上面的
 PowerShell 命令。未删除已有数据卷，旧 `web-node-modules` 卷不再挂载，也不会自动清理。
 
-CI 分为 `native-checks` 和 `integration`：前者直接运行 uv/pnpm、SQLite、FFmpeg、
-OpenAPI 和 Web 门禁；后者在独立临时 Compose 项目里验证 PostgreSQL 空库迁移、
-三轮并发账本、Hatchet 幂等与构建产物 E2E。原 `test` 状态汇总两组结果，任何一组失败
-都不能通过。CI 清理只针对本次运行创建的卷，不提供本机清库目标。
-实施结果和未执行的远程门禁见
-[WINDEV-05 验证记录](docs/reports/WINDEV-05_Compose隔离与CI验证.md)。
+CI 在 Windows runner 上运行相同测试，使用 runner 自带 PostgreSQL 二进制建立临时实例；
+不启动容器栈。`test` required check 要求原生测试、静态检查、API Client 和浏览器闭环成功。
+历史 WINDEV 报告描述当时的验收，不作为当前测试入口。
 
 ## 可选 Hatchet Cloud 集成
 
@@ -131,9 +125,9 @@ Token 文件优先于直接配置的 Token；相对路径以仓库根为准。
 ```
 
 `test-hatchet` 即使日常 Backend 为 `local` 也会单独使用 Cloud，按次生成独立
-命名空间，检查真实耐久工作流、子任务、输出和重复提交复用。它会重建指定测试库
-业务表，并在 Cloud 留下测试工作流和运行记录；不应使用生产租户或共享测试库。
-无凭据时明确输出 `SKIP`，不连接数据库或 Cloud；普通测试默认跳过远程用例。
+命名空间，检查真实耐久工作流、子任务、输出和重复提交复用。它使用独立 schema，
+并在 Cloud 留下测试工作流和运行记录；不应使用生产租户。
+显式请求但无凭据时返回失败，不连接数据库或 Cloud；普通测试不选择远程用例。
 已配置但无效的凭据应报错，不会自动退回 Local。
 
 当前已加入锁定 SDK 的 Windows 信号适配；真实 Cloud 验收仍待配置 Token 后执行。

@@ -42,11 +42,11 @@ API 与 Worker 必须使用同一数据库、存储路径、Claim Secret 和命�
 `./scripts/dev.ps1 web`。Local 开发无需这些 Cloud 配置和独立 Worker。
 
 自动验收只需 `./scripts/dev.ps1 test-hatchet`，要求已有、独立、以 `_test` 结尾的
-`TEST_DATABASE_URL`。测试会重建业务表，不得与其他测试进程共享测试库；不会清开发库。
-普通 `test-api` 不触发 Cloud。无 Token 时输出 `SKIP` 且退出 0，这表示跳过而非云验收通过。
+`TEST_DATABASE_URL`。每次测试独立 schema，不重建既有业务表或清理开发库。
+普通 `test-api` 不触发 Cloud。显式请求 Cloud 但无 Token 时返回非零退出，不计为验收通过。
 Token 文件指定但不可读、TLS 不合法、认证失败或运行超时均应视为失败。
 
-远程测试带 `integration` 和 `hatchet_cloud` marker，显式开关为 `RUN_HATCHET_CLOUD=1`。
+远程测试带 `live` 和 `database` marker，显式 pytest 开关为 `--run-live`。
 建议只用原生命令开启，以保留数据库 URL 和隔离检查。测试在 Windows 进程中运行 FastAPI
 TestClient，另起 Windows Worker，使用唯一 `windev04_*` 命名空间和 Mock Provider；
 经过 API → Outbox → Cloud durable workflow → provider child task → PostgreSQL，
@@ -54,7 +54,7 @@ TestClient，另起 Windows Worker，使用唯一 `windev04_*` 命名空间和 M
 这不是 Web/Auth 或真实 GPU 验收。
 
 Worker 就绪等待上限 90 秒，Job 完成等待 120 秒，结果/重复提交各 30 秒。
-Worker 日志位于忽略提交的 `apps/api/.test-tmp-native/run-*/pytest/` 内；排错时先检查并脱敏，
+Worker 日志位于忽略提交的 `.test-runs/live-*/pytest/` 内；排错时先检查并脱敏，
 不公开原始 SDK 日志。测试结束只清理自己创建的 Worker 进程树，不停止其他开发进程。
 Cloud 的工作流定义和运行历史不会自动删除；在开发租户按该次 `windev04_*` 命名空间
 核对和清理，避免误删日常任务。测试本身可能产生 Cloud 用量。

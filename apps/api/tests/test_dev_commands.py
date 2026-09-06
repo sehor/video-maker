@@ -146,18 +146,18 @@ def test_hatchet_file_paths_are_relative_to_repository_not_process_directory(tmp
     assert Path(loaded["HATCHET_CLIENT_TLS_ROOT_CA_FILE"]) == ROOT / "private keys/root.pem"
 
 
-def test_cloud_without_credentials_skips_before_database_or_process(tmp_path, monkeypatch, capsys):
+def test_cloud_without_credentials_fails_before_database_or_process(tmp_path, monkeypatch, capsys):
     target = tmp_path / "cloud.env"
     target.write_text("WORKFLOW_BACKEND=local\nHATCHET_CLIENT_TOKEN=   \n")
     monkeypatch.setattr(dev.os, "environ", {})
 
     def unexpected(*args, **kwargs):
-        pytest.fail("No credentials must skip before any database or process access")
+        pytest.fail("No credentials must fail before any database or process access")
 
     monkeypatch.setattr(dev, "validate_database_pair", unexpected)
     monkeypatch.setattr(dev, "run", unexpected)
-    assert dev.main(["--env-file", str(target), "test-hatchet"]) == 0
-    assert "SKIP Hatchet Cloud" in capsys.readouterr().out
+    assert dev.main(["--env-file", str(target), "test-hatchet"]) == 1
+    assert "credentials are missing" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("configuration", [

@@ -1,12 +1,15 @@
 import uuid
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+import pytest
+from sqlalchemy import inspect, text
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.config import get_settings
+
+pytestmark = pytest.mark.database
 
 
 def alembic_config(database_url: str) -> Config:
@@ -25,12 +28,10 @@ def only_alembic_head(config: Config) -> str:
     return heads[0]
 
 
-def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
-    # Percent signs in URLs must survive Alembic's ConfigParser interpolation.
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'empty%20.db'}"
+def test_empty_database_upgrades_to_head(migration_database) -> None:
+    database_url, engine = migration_database
     config = alembic_config(database_url)
     command.upgrade(config, "head")
-    engine = create_engine(database_url)
     tables = set(inspect(engine).get_table_names())
     assert {
         "project_assets",
@@ -58,13 +59,16 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
     with engine.connect() as connection:
         triggers = set(
-            connection.scalars(text("SELECT name FROM sqlite_master WHERE type = 'trigger'"))
+            connection.scalars(text(
+                "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = current_schema() AND NOT t.tgisinternal"
+            ))
         )
     assert {
-        "ledger_postings_immutable_update",
-        "ledger_postings_immutable_delete",
+        "ledger_postings_immutable",
+        "ledger_transactions_balanced",
         "generation_quote_terms_immutable",
-        "generation_quote_status_monotonic",
         "generation_attempt_snapshot_immutable",
     } <= triggers
     with engine.connect() as connection:
@@ -73,18 +77,17 @@ def test_empty_database_upgrades_to_head(tmp_path: Path) -> None:
         )
 
     command.downgrade(config, "0001_stage_one")
-    downgraded_tables = set(inspect(create_engine(database_url)).get_table_names())
+    downgraded_tables = set(inspect(engine).get_table_names())
     assert {"assets", "jobs", "attempts", "outputs"} <= downgraded_tables
     command.upgrade(config, "head")
 
 
 def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
-    tmp_path: Path,
+    migration_database,
 ) -> None:
-    database_url = f"sqlite+pysqlite:///{tmp_path / 'stage-one.db'}"
+    database_url, engine = migration_database
     config = alembic_config(database_url)
     command.upgrade(config, "0001_stage_one")
-    engine = create_engine(database_url)
     user_id = uuid.uuid4().hex
     project_id = uuid.uuid4().hex
     shot_id = uuid.uuid4().hex

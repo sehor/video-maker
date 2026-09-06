@@ -2,6 +2,7 @@ import asyncio
 import uuid
 from datetime import UTC, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -291,3 +292,6 @@ def test_poll_budget_timeout_finishes_after_bounded_attempt_retries(
             )
     finally:
         routes.activate(previous)
+
+
+pytestmark = pytest.mark.database

@@ -224,3 +224,6 @@ def test_generation_rejects_execution_configuration_injection(
     response = raw_client.post("/v1/generations", json=payload)
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+pytestmark = pytest.mark.database

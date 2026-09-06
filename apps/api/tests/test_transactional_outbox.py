@@ -249,3 +249,6 @@ def test_lifecycle_dispatcher_drains_backlog_without_waiting(
     monkeypatch.setattr(main_module, "dispatch_generation_outbox", dispatch)
     asyncio.run(main_module.outbox_dispatcher_loop(stop))
     assert calls == 2
+
+
+pytestmark = pytest.mark.database

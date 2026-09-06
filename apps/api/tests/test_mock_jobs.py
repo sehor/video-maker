@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
@@ -130,3 +131,6 @@ def test_other_user_cannot_access_job_or_output(client: TestClient) -> None:
         ).status_code
         == 404
     )
+
+
+pytestmark = pytest.mark.database

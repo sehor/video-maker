@@ -1,5 +1,9 @@
 # 03｜阶段三：RunPod 第一条真实视频路线
 
+> 测试入口更新（2026-09-06）：自动回归使用 Windows PostgreSQL 独立 schema，
+> RunPod/Hatchet/容器操作使用模拟，不依赖 WSL/Docker。真实 GPU/Cloud 验证单独记录，
+> 不以模拟通过替代。当前命令及验收边界见 [测试约定](testing.md)。
+
 > 目标：只上线一条稳定、可追溯的 720p 开放模型路线。  
 > 前置：阶段二的账本、Outbox、Hatchet、幂等和恢复测试全部通过。
 

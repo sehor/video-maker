@@ -152,3 +152,6 @@ def test_cancel_and_replay_release_once_without_publishing(
         assert len(provider.jobs()) == 1
     finally:
         routes.activate(previous)
+
+
+pytestmark = pytest.mark.database

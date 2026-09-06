@@ -10,10 +10,15 @@ permissions:
 
 jobs:
   native-checks:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
     env:
       WORKFLOW_BACKEND: local
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:@127.0.0.1:55432/video_factory_ci_test
+      UV_CACHE_DIR: ${{ github.workspace }}/apps/api/.uv-cache
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -27,130 +32,73 @@ jobs:
         with:
           node-version: 22.19.0
           cache: pnpm
-      - name: Install locked dependencies and host FFmpeg
+      - name: Install locked dependencies
         run: |
           uv sync --project apps/api --locked --extra dev
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm install --frozen-lockfile
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Repository and environment boundaries
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          choco install ffmpeg --no-progress -y
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          pnpm --filter @video-factory/web exec playwright install chromium
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Start disposable Windows PostgreSQL on the CI runner
         run: |
-          uv run --project apps/api --no-sync python scripts/check_repository_baseline.py
-          uv run --project apps/api --no-sync python -m unittest discover -s tests
-          uv run --project apps/api --no-sync python workers/runpod-comfyui/contract/validate.py --root .
-      - name: API SQLite unit tests and lint
-        working-directory: apps/api
+          $pgBin = Get-ChildItem 'C:\Program Files\PostgreSQL' -Filter pg_ctl.exe -Recurse |
+            Select-Object -First 1 -ExpandProperty DirectoryName
+          if (-not $pgBin) { throw 'Windows PostgreSQL binaries are required' }
+          $pgData = Join-Path $env:RUNNER_TEMP 'video-factory-pg'
+          & "$pgBin/initdb.exe" -D $pgData -U postgres -A trust --encoding=UTF8
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$pgBin/pg_ctl.exe" -D $pgData -l "$env:RUNNER_TEMP/postgres.log" -o '-h 127.0.0.1 -p 55432' -w start
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & "$pgBin/createdb.exe" -h 127.0.0.1 -p 55432 -U postgres video_factory_ci_test
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "TEST_PG_BIN=$pgBin" >> $env:GITHUB_ENV
+          "TEST_PG_DATA=$pgData" >> $env:GITHUB_ENV
+      - name: Python and Web behavior tests
+        run: pnpm test
+      - name: Static checks and generated API client
         run: |
-          uv run --no-sync pytest -q --tb=short -rs
-          uv run --no-sync ruff check app tests ../../scripts/dev.py ../../tests/test_environment_boundaries.py
-      - name: Host FFmpeg build inventory
-        working-directory: apps/api
-        run: uv run --no-sync python scripts/export_ffmpeg_build.py
-      - name: Web unit tests, lint, typecheck and production build
-        run: |
-          pnpm test
+          uv run --project apps/api --no-sync ruff check apps/api/app apps/api/tests scripts/test.py scripts/test_support.py scripts/dev.py conftest.py tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm lint
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm typecheck
-          pnpm build
-      - name: OpenAPI client is current
-        run: |
-          cd apps/api
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Push-Location apps/api
           uv run --no-sync python scripts/export_openapi.py
-          cd ../..
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Pop-Location
           pnpm --filter @video-factory/api-client check
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git diff --exit-code -- packages/api-client
-
-  integration:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      # An ephemeral CI project only; never reuse or remove a developer's volumes.
-      COMPOSE_PROJECT_NAME: video-maker-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      COMPOSE_FILE: compose.yaml
-      COMPOSE_ENV_FILES: .env.compose.example
-      COMPOSE_PROFILES: integration
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.19.0
-          cache: pnpm
-      - name: Validate and build service images
-        run: |
-          docker compose config --quiet
-          docker compose build api hatchet-worker web
-      - name: Install E2E dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @video-factory/web exec playwright install --with-deps chromium
-      - name: PostgreSQL empty database migration and head
-        env:
-          TEST_DATABASE_URL: postgresql+psycopg://video_factory:change-me-compose-only@postgres:5432/video_factory_ci_test
-        run: |
-          docker compose up -d --wait --wait-timeout 90 postgres
-          docker compose exec -T postgres \
-            psql -U video_factory -d postgres -v ON_ERROR_STOP=1 \
-            -c "CREATE DATABASE video_factory_ci_test"
-          docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
-            -e DATABASE_URL="$TEST_DATABASE_URL" api alembic upgrade head
-          docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
-            -e DATABASE_URL="$TEST_DATABASE_URL" api python scripts/check_database_head.py
-      - name: PostgreSQL concurrency regressions, three rounds
-        env:
-          TEST_DATABASE_URL: postgresql+psycopg://video_factory:change-me-compose-only@postgres:5432/video_factory_ci_test
-        run: |
-          for run in 1 2 3; do
-            echo "PostgreSQL concurrency run ${run}/3"
-            docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local \
-              -e TEST_DATABASE_URL="$TEST_DATABASE_URL" api pytest -q \
-              tests/test_quote_ledger.py::test_competing_submissions_cannot_overdraw \
-              tests/test_batch_atomic.py::test_competing_batches_cannot_overdraw_wallet
-          done
-      - name: Container FFmpeg build and license inventory
-        run: docker compose run --rm --no-deps -e WORKFLOW_BACKEND=local api python scripts/export_ffmpeg_build.py
-      - name: Start Hatchet, API and built Web
-        run: docker compose up -d --wait --wait-timeout 180
-      - name: Hatchet duplicate-start contract
-        run: |
-          docker compose run --rm --no-deps -e RUN_HATCHET_INTEGRATION=1 \
-            api pytest -q tests/test_hatchet_integration.py
-      - name: End-to-end business loop against built Web
-        env:
-          E2E_BASE_URL: http://localhost:3000
-        run: pnpm --filter @video-factory/web test:e2e
-      - name: Capture integration diagnostics
-        if: failure()
-        run: |
-          mkdir -p artifacts
-          docker compose ps -a > artifacts/compose-status.txt
-          docker compose logs --no-color --tail 200 api hatchet-worker web postgres > artifacts/services.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native browser business flow with a fresh production build
+        run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: integration-diagnostics
+          name: native-test-results
           path: |
-            artifacts/
+            .test-runs/
             apps/web/playwright-report/
             apps/web/test-results/
           retention-days: 3
-      - name: Remove only this ephemeral CI project
-        if: always()
+      - name: Stop only the temporary CI database
+        if: always() && env.TEST_PG_DATA != ''
         run: |
-          case "$COMPOSE_PROJECT_NAME" in
-            video-maker-ci-*) docker compose down -v --remove-orphans ;;
-            *) echo "Refusing to remove an unexpected Compose project"; exit 1 ;;
-          esac
+          & "$env:TEST_PG_BIN/pg_ctl.exe" -D $env:TEST_PG_DATA -m fast -w stop
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-  # Preserve the previous required-check name while both independent jobs must succeed.
   test:
-    runs-on: ubuntu-24.04
-    needs: [native-checks, integration]
+    runs-on: windows-2022
+    needs: [native-checks]
     if: always()
     steps:
-      - name: Require both check groups
+      - name: Preserve required check and reject failed or skipped validation
+        shell: pwsh
         env:
           NATIVE_RESULT: ${{ needs.native-checks.result }}
-          INTEGRATION_RESULT: ${{ needs.integration.result }}
-        run: test "$NATIVE_RESULT" = success && test "$INTEGRATION_RESULT" = success
+        run: |
+          if ($env:NATIVE_RESULT -ne 'success') { exit 1 }

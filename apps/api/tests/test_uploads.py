@@ -1,5 +1,6 @@
 import io
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_projects_permissions import create_project
@@ -105,3 +106,6 @@ def test_shot_reference_requires_an_asset_from_the_same_project(client: TestClie
         .json()["references"]
         == []
     )
+
+
+pytestmark = pytest.mark.database

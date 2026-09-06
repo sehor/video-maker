@@ -489,3 +489,6 @@ def test_final_failure_and_late_cancel_after_request_release_once(
         assert job.settlement_status == SettlementStatus.RELEASED
     assert ledger_count(running["id"], "SETTLE") == 0
     assert ledger_count(running["id"], "RELEASE") == 1
+
+
+pytestmark = pytest.mark.database

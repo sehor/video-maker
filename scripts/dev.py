@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 from sqlalchemy import create_engine, inspect, text
@@ -192,6 +191,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
+        test_groups = {"test": "test", "test-api": "python", "test-web": "web", "e2e": "e2e"}
+        if args.task in test_groups:
+            test_env = dict(os.environ)
+            if args.env_file.is_file():
+                values = dotenv_values(args.env_file, interpolate=False, encoding="utf-8-sig")
+                for key in ("TEST_DATABASE_URL", "DATABASE_URL"):
+                    if values.get(key) is not None:
+                        test_env.setdefault(key, values[key])
+            run([sys.executable, str(ROOT / "scripts/test.py"), test_groups[args.task],
+                 *args.args], test_env)
+            return 0
         env = load_environment(args.env_file.resolve(), dict(os.environ))
         for key in ("PGPASSWORD", "PGSERVICE", "PGSERVICEFILE", "PGPASSFILE"):
             env.pop(key, None)
@@ -200,8 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.task == "test-hatchet":
             if not (env.get("HATCHET_CLIENT_TOKEN", "").strip()
                     or env.get("HATCHET_CLIENT_TOKEN_FILE")):
-                print("SKIP Hatchet Cloud: configure HATCHET_CLIENT_TOKEN or its token file")
-                return 0
+                raise PreflightError("Hatchet Cloud requested but credentials are missing")
             if env.get("HATCHET_CLIENT_TLS_STRATEGY", "tls") != "tls":
                 raise PreflightError("Hatchet Cloud integration requires TLS strategy=tls")
             env["RUN_HATCHET_CLOUD"] = "1"
@@ -237,28 +246,17 @@ def main(argv: list[str] | None = None) -> int:
             if env.get("WORKFLOW_BACKEND", "local") != "hatchet":
                 raise PreflightError("worker requires WORKFLOW_BACKEND=hatchet; local needs none")
             uv(["python", "-m", "app.worker", *args.args], env)
-        elif args.task in {"test", "test-api", "test-hatchet"}:
+        elif args.task == "test-hatchet":
             test_url = validate_test_database(env, url)
             inspect_database(test_url)  # Never create or drop a database automatically.
-            runtime_parent = API / ".test-tmp-native"
+            runtime_parent = ROOT / ".test-runs"
             runtime_parent.mkdir(exist_ok=True)
-            runtime = Path(tempfile.mkdtemp(prefix="run-", dir=runtime_parent))
+            runtime = Path(tempfile.mkdtemp(prefix="live-", dir=runtime_parent))
             env["TEST_RUNTIME_ROOT"] = str(runtime / "data")
             # A fresh directory avoids stale Windows ACLs and pytest deleting a shared temp root.
-            selection = (
-                ["tests/test_hatchet_cloud.py", "-rs"] if args.task == "test-hatchet" else []
-            )
+            selection = ["tests/test_hatchet_cloud.py", "--run-live"]
             uv(["pytest", "-q", "--tb=short", "--basetemp", str(runtime / "pytest"),
                 "-o", f"cache_dir={runtime / 'cache'}", *selection, *args.args], env)
-            if args.task == "test":
-                pnpm(["test"], env)
-        elif args.task == "test-web":
-            pnpm(["test", *args.args], env)
-        elif args.task == "e2e":
-            target = urlsplit(env["E2E_BASE_URL"])
-            if target.hostname not in {"localhost", "127.0.0.1", "::1"}:
-                raise PreflightError("Native E2E requires a local E2E_BASE_URL and running API/Web")
-            pnpm(["test:e2e", *args.args], env)
         elif args.task == "lint":
             uv(["ruff", "check", "app", "tests", "../../scripts/dev.py"], env)
             pnpm(["lint"], env)

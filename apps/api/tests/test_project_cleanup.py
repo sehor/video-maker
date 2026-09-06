@@ -331,3 +331,6 @@ def test_cleanup_reclaims_expired_lease_after_delete_crash(
     assert completed_objects[0].status == StorageCleanupObjectStatus.DELETED
     assert completed_objects[0].attempt_count == 2
     assert storage.calls == [object_key, object_key]
+
+
+pytestmark = pytest.mark.database

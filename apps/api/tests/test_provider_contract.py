@@ -3,6 +3,7 @@ import asyncio
 import uuid
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -179,3 +180,6 @@ def test_submit_rejection_fails_without_unknown_reconciliation(
             db.scalars(select(JobEvent.event_type).where(JobEvent.job_id == job_id))
         )
     assert "provider.submit_unknown" not in event_types
+
+
+pytestmark = pytest.mark.database

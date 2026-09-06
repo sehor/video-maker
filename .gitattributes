@@ -1,0 +1,2 @@
+# The generator compares raw bytes; Windows checkout must preserve its LF output.
+packages/api-client/src/schema.d.ts text eol=lf

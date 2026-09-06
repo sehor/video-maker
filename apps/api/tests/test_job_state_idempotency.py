@@ -1,5 +1,6 @@
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -318,3 +319,6 @@ def test_stage_two_write_replays_do_not_repeat_grant_quote_or_cancel(
             ).all()
         )
         assert tx_counts == {"GRANT": 1, "RELEASE": 1, "RESERVE": 1}
+
+
+pytestmark = pytest.mark.database

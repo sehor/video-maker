@@ -20,4 +20,18 @@ test('register, create project, create shot and run mock generation', async ({ p
   await page.getByRole('button', { name: '开始生成' }).click()
   await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('video')).toBeVisible()
+  await expect.poll(() => page.locator('video').evaluate((video: HTMLVideoElement) => ({
+    ready: video.readyState >= 2, width: video.videoWidth, height: video.videoHeight,
+    error: video.error?.code ?? null
+  }))).toEqual({ ready: true, width: 1280, height: 720, error: null })
+  // Reload verifies persistence and output retrieval, not just an optimistic UI state.
+  await page.reload()
+  await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible()
+  await expect(page.locator('video')).toBeVisible()
+})
+
+test('protected project list redirects an unauthenticated visitor to login', async ({ page }) => {
+  await page.goto('/projects')
+  await expect(page).toHaveURL(/\/login/)
+  await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
 })

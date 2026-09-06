@@ -5,6 +5,7 @@
 __pycache__/
 .pytest_cache/
 .test-tmp*/
+.test-runs/
 .ruff_cache/
 *.py[cod]
 *.db

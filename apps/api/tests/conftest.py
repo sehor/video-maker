@@ -1,28 +1,25 @@
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
 import pytest
 from fastapi import Header
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from test_support import isolated_schema, migrate, test_database_url
 
-api_root = Path(__file__).resolve().parents[1]
 test_runtime_root = Path(
-    os.environ.get("TEST_RUNTIME_ROOT", api_root / ".test-tmp")
+    os.environ.get("TEST_RUNTIME_ROOT") or tempfile.mkdtemp(prefix="video-tests-")
 ).resolve()
 test_runtime_root.mkdir(parents=True, exist_ok=True)
 
-test_database_url = os.environ.get("TEST_DATABASE_URL")
-if test_database_url:
-    database_name = test_database_url.rsplit("/", 1)[-1].split("?", 1)[0]
-    if not database_name.endswith("_test"):
-        raise RuntimeError("TEST_DATABASE_URL must target a database ending in _test")
-    os.environ["DATABASE_URL"] = test_database_url
-else:
-    os.environ["DATABASE_URL"] = (
-        f"sqlite+pysqlite:///{test_runtime_root / 'test.db'}"
-    )
+# A nonconnecting placeholder allows pure tests without any configured database.
+os.environ["DATABASE_URL"] = "postgresql+psycopg://unused:unused@127.0.0.1:1/unused_test"
+os.environ["ENVIRONMENT"] = "development"
+os.environ["GENERATION_ROUTE_VERSION"] = "mock_video_v1"
+os.environ["RUNPOD_PROVIDER_ENABLED"] = "false"
 os.environ["STORAGE_ROOT"] = str(test_runtime_root / "storage")
 os.environ["OUTBOX_DISPATCHER_ENABLED"] = "false"
 os.environ["RECONCILER_ENABLED"] = "false"
@@ -34,7 +31,7 @@ os.environ["ADMIN_AUTH_SUBJECTS"] = "admin-user"
 from app import main, public_api  # noqa: E402
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.db import Base, engine  # noqa: E402
+from app.db import engine  # noqa: E402
 from app.generation_options import (  # noqa: E402
     InternalGenerationOptions,
     get_internal_generation_options,
@@ -63,14 +60,65 @@ def test_generation_options(
 app.dependency_overrides[get_internal_generation_options] = test_generation_options
 
 
-@pytest.fixture(autouse=True)
-def clean_database(tmp_path: Path):
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-    settings = get_settings()
-    settings.storage_root = tmp_path / "storage"
+@pytest.fixture(scope="session")
+def database_engine():
+    with isolated_schema(test_database_url()) as url:
+        migrate(url)
+        isolated = create_engine(url, pool_pre_ping=True)
+        original_pool, original_url = engine.pool, engine.url
+        engine.pool, engine.url = isolated.pool, url
+        try:
+            yield engine
+        finally:
+            engine.dispose()
+            engine.pool, engine.url = original_pool, original_url
+
+
+@pytest.fixture
+def clean_database(database_engine):
+    # Retain real commits and separate connections so races/locks are tested honestly.
+    # DDL/migrations run once, data alone is reset between tests.
+    with database_engine.begin() as connection:
+        tables = connection.scalars(text(
+            "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() "
+            "AND tablename != 'alembic_version'"
+        )).all()
+        if tables:
+            names = ", ".join(f'"{name}"' for name in tables)
+            connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     yield
-    Base.metadata.drop_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch, request):
+    settings = get_settings()
+    original = settings.model_copy(deep=True)
+    monkeypatch.setattr(settings, "storage_root", tmp_path / "storage")
+    if request.node.get_closest_marker("database"):
+        request.getfixturevalue("clean_database")
+        monkeypatch.setattr(
+            settings, "database_url", engine.url.render_as_string(hide_password=False)
+        )
+    else:
+        def unexpected_connection(*args, **kwargs):
+            pytest.fail("Database access requires @pytest.mark.database")
+        monkeypatch.setattr(engine, "connect", unexpected_connection)
+    overrides = app.dependency_overrides.copy()
+    yield
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(overrides)
+    for key, value in original.__dict__.items():
+        setattr(settings, key, value)
+
+
+@pytest.fixture
+def migration_database():
+    with isolated_schema(test_database_url()) as url:
+        temporary = create_engine(url)
+        try:
+            yield url.render_as_string(hide_password=False), temporary
+        finally:
+            temporary.dispose()
 
 
 @pytest.fixture

@@ -408,3 +408,6 @@ def test_duplicate_final_failure_releases_once(raw_client: TestClient) -> None:
         assert job.settlement_status == SettlementStatus.RELEASED
     assert ledger_count(running["id"], "RELEASE") == 1
     assert ledger_count(running["id"], "SETTLE") == 0
+
+
+pytestmark = pytest.mark.database

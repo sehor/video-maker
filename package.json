@@ -4,11 +4,17 @@
   "packageManager": "pnpm@9.12.3",
   "workspaces": ["apps/web", "packages/api-client"],
   "scripts": {
-    "test": "pnpm --filter @video-factory/web test",
+    "test": "uv run --project apps/api --no-sync python scripts/test.py test",
+    "test:all": "uv run --project apps/api --no-sync python scripts/test.py all",
+    "test:unit": "uv run --project apps/api --no-sync python scripts/test.py unit",
+    "test:db": "uv run --project apps/api --no-sync python scripts/test.py db",
+    "test:media": "uv run --project apps/api --no-sync python scripts/test.py media",
+    "test:python": "uv run --project apps/api --no-sync python scripts/test.py python",
+    "test:web": "pnpm --filter @video-factory/web test",
     "lint": "pnpm --filter @video-factory/web lint",
     "build": "pnpm --filter @video-factory/web build",
     "typecheck": "pnpm --filter @video-factory/web exec vue-tsc --noEmit",
-    "test:e2e": "pnpm --filter @video-factory/web test:e2e",
+    "test:e2e": "uv run --project apps/api --no-sync python scripts/test.py e2e",
     "generate:client": "pnpm --filter @video-factory/api-client generate"
   },
   "engines": { "node": ">=22" }

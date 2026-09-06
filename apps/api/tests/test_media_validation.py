@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 import time
@@ -14,10 +13,20 @@ from app.media import (
     MediaValidator,
     inspect_ffmpeg_build,
 )
-from app.provider import FailureCode
+from app.provider import FailureCode, mock_video_fixture
 
 FIXTURES = Path(__file__).parent / "fixtures" / "media"
 POLICY = MediaPolicy(expected_duration_ms=5_000, expected_aspect_ratio="16:9")
+pytestmark = pytest.mark.media
+
+
+def test_mock_success_fixture_uses_playable_h264_and_truthful_metadata(tmp_path):
+    path = tmp_path / "mock.mp4"
+    path.write_bytes(mock_video_fixture())
+    facts = MediaValidator().validate(
+        path, MediaPolicy(expected_duration_ms=2_000, expected_aspect_ratio="16:9")
+    )
+    assert (facts.codec, facts.frame_rate, facts.duration_ms) == ("h264", 25, 2_000)
 
 
 def assert_media_error(
@@ -120,7 +129,7 @@ def test_media_path_is_one_argument_and_cannot_inject_a_command(
     assert all(argv[-1] == str(suspicious) or str(suspicious) in argv for argv, _ in calls)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group regression")
+@pytest.mark.posix
 def test_ffprobe_timeout_kills_its_child_process(tmp_path: Path) -> None:
     fake_ffprobe = tmp_path / "ffprobe-sleeper"
     fake_ffprobe.write_text(

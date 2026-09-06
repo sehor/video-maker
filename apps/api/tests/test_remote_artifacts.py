@@ -197,7 +197,7 @@ def _execute(
 def _portrait_fixture(path: Path) -> bytes:
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
-        pytest.skip("local ffmpeg is required by the media-validation issue")
+        pytest.fail("FFmpeg is required for media tests; install the Windows binary")
     subprocess.run(
         [
             ffmpeg,
@@ -349,3 +349,6 @@ def test_uncontrolled_object_key_is_rejected_before_download(
         )
         assert attempt is not None
         assert attempt.status.value == "FAILED_FINAL"
+
+
+pytestmark = [pytest.mark.database, pytest.mark.media]
