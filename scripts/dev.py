@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime = Path(tempfile.mkdtemp(prefix="live-", dir=runtime_parent))
             env["TEST_RUNTIME_ROOT"] = str(runtime / "data")
             # A fresh directory avoids stale Windows ACLs and pytest deleting a shared temp root.
-            selection = ["tests/test_hatchet_cloud.py", "--run-live"]
+            selection = ["tests/test_hatchet_cloud.py", "--run-live", "--run-db"]
             uv(["pytest", "-q", "--tb=short", "--basetemp", str(runtime / "pytest"),
                 "-o", f"cache_dir={runtime / 'cache'}", *selection, *args.args], env)
         elif args.task == "lint":

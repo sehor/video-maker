@@ -34,11 +34,24 @@ def environment(runtime: Path) -> dict[str, str]:
     return env
 
 
+DB_SMOKE_TESTS = (
+    "apps/api/tests/test_projects_permissions.py::test_project_and_shot_crud",
+    "apps/api/tests/test_projects_permissions.py::test_other_user_cannot_access_project_or_shot",
+    "apps/api/tests/test_uploads.py::test_upload_and_private_download",
+    "apps/api/tests/test_mock_jobs.py::test_mock_success_produces_playable_mp4",
+)
+
+
 def python_tests(group: str, env: dict[str, str], runtime: Path, extra: list[str]) -> None:
-    selection = {"unit": "not database and not live and not media",
-                 "db": "database and not live", "media": "media and not live"}
+    selection = {"unit": "not database and not live",
+                 "db": "database and not live", "db-full": "database and not live",
+                 "media": "media and not live"}
     args = [sys.executable, "-m", "pytest", "-q", "--basetemp", str(runtime / "pytest"),
             "-o", f"cache_dir={runtime / 'cache'}", f"--junitxml={runtime / 'python.xml'}"]
+    if group in {"db", "db-full", "all"}:
+        args += ["--run-db"]
+    if group == "db":
+        args += list(DB_SMOKE_TESTS)
     if group in selection:
         args += ["-m", selection[group]]
     run([*args, *extra], env)
@@ -121,7 +134,7 @@ def e2e(env: dict[str, str], runtime: Path, extra: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("group", choices=["test", "all", "python", "unit", "db", "media", "web", "e2e"],
+    parser.add_argument("group", choices=["test", "all", "python", "unit", "db", "db-full", "media", "web", "e2e"],
                         default="test", nargs="?")
     args, extra = parser.parse_known_args(argv)
     parent = ROOT / ".test-runs"
@@ -130,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     env = environment(runtime)
     print(f"Test artifacts: {runtime}", flush=True)
     try:
-        if args.group in {"test", "all", "python", "unit", "db", "media"}:
+        if args.group in {"test", "all", "python", "unit", "db", "db-full", "media"}:
             python_tests(args.group, env, runtime, extra)
         if args.group in {"test", "all", "web"}:
             run(["pnpm", "--filter", "@video-factory/web", "test"], env)

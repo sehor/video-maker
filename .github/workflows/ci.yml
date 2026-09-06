@@ -1,6 +1,12 @@
 name: ci
 
 on:
+  workflow_dispatch:
+    inputs:
+      full_integration:
+        description: Run full PostgreSQL and browser integration tests
+        type: boolean
+        default: false
   pull_request:
   push:
     branches: [main]
@@ -38,9 +44,11 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm install --frozen-lockfile
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          pnpm --filter @video-factory/web exec playwright install chromium
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install browser for explicit integration run
+        if: github.event_name == 'workflow_dispatch' && inputs.full_integration
+        run: pnpm --filter @video-factory/web exec playwright install chromium
       - name: Start disposable Windows PostgreSQL on the CI runner
+        if: github.event_name == 'workflow_dispatch' && inputs.full_integration
         run: |
           $pgBin = Get-ChildItem 'C:\Program Files\PostgreSQL' -Filter pg_ctl.exe -Recurse |
             Select-Object -First 1 -ExpandProperty DirectoryName
@@ -54,7 +62,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "TEST_PG_BIN=$pgBin" >> $env:GITHUB_ENV
           "TEST_PG_DATA=$pgData" >> $env:GITHUB_ENV
-      - name: Python and Web behavior tests
+      - name: Lightweight Python and Web tests (no database)
         run: pnpm test
       - name: Static checks and generated API client
         run: |
@@ -72,7 +80,11 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           git diff --exit-code -- packages/api-client
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Explicit full database integration tests
+        if: github.event_name == 'workflow_dispatch' && inputs.full_integration
+        run: pnpm test:db:full
       - name: Native browser business flow with a fresh production build
+        if: github.event_name == 'workflow_dispatch' && inputs.full_integration
         run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: always()

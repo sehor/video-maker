@@ -8,6 +8,7 @@
     "test:all": "uv run --project apps/api --no-sync python scripts/test.py all",
     "test:unit": "uv run --project apps/api --no-sync python scripts/test.py unit",
     "test:db": "uv run --project apps/api --no-sync python scripts/test.py db",
+    "test:db:full": "uv run --project apps/api --no-sync python scripts/test.py db-full",
     "test:media": "uv run --project apps/api --no-sync python scripts/test.py media",
     "test:python": "uv run --project apps/api --no-sync python scripts/test.py python",
     "test:web": "pnpm --filter @video-factory/web test",

@@ -9,6 +9,7 @@ import pytest
 
 
 def pytest_addoption(parser):
+    parser.addoption("--run-db", action="store_true", help="Explicit database integration tests")
     parser.addoption("--run-live", action="store_true", help="Explicit remote verification")
 
 
@@ -19,7 +20,9 @@ def pytest_collection_modifyitems(config, items):
             item.get_closest_marker("windows") and os.name != "nt"
         )
         live = item.get_closest_marker("live")
-        if inapplicable or (live and not config.getoption("--run-live")):
+        database = item.get_closest_marker("database")
+        if (inapplicable or (live and not config.getoption("--run-live"))
+                or (database and not config.getoption("--run-db"))):
             excluded.append(item)
         else:
             selected.append(item)

@@ -57,19 +57,21 @@ dotenv 解析，不执行 PowerShell，不展开 `${...}`；密码中的 `$` 保
 
 ## 测试与检查
 
-先用已有 PostgreSQL 管理工具建立独立测试库，例如 `video-maker_test`，然后
+日常 `pnpm test` 无需数据库。只有手动执行数据库/E2E 测试时，才需先用已有
+PostgreSQL 管理工具建立独立测试库，例如 `video-maker_test`，然后
 在 `.env` 填写完整的 `TEST_DATABASE_URL`。脚本不自动创建数据库；测试库名
 必须以 `_test` 结尾，且不能等于开发库名。所有数据库测试使用 **Windows PostgreSQL**，
 不回退 SQLite。每次运行创建独立 schema，使用 Alembic 真实迁移，结束只删除本次 schema；
 测试库已有表、开发数据和其他测试运行不受影响。缓存、日志及 JUnit 报告写入 `.test-runs/`。
 
 ```powershell
-pnpm test                     # 全部 Python（含仓库脚本）+ Web 单元测试
+pnpm test                     # 日常轻量 Python + Web，不访问数据库
 pnpm test:unit                # 快速逻辑测试，不访问数据库、不解码媒体
-pnpm test:db                  # PostgreSQL 迁移、约束、业务和并发
-pnpm test:media               # 轻量元数据校验和结果接收集成
+pnpm test:db                  # 手动：仅 4 条数据库核心流程
+pnpm test:db:full             # 手动：完整数据库回归，含迁移和并发
+pnpm test:media               # 无数据库的轻量元数据检查
 pnpm test:e2e                 # 独立 schema、临时端口、自动管理原生 API/Web
-pnpm test:all                 # 包含 E2E 的完整测试
+pnpm test:all                 # 手动：包含数据库和 E2E 的完整测试
 ./scripts/dev.ps1 test-api     # Python 测试兼容入口；可追加 -k 或文件
 ./scripts/dev.ps1 lint
 ./scripts/dev.ps1 typecheck
@@ -103,8 +105,9 @@ Makefile 提供 `compose-config`、`compose-build`、`compose-up`、`compose-sta
 容器不挂载源码、不提供热更新，Web 运行构建后的 Nitro 服务；本地开发继续使用上面的
 PowerShell 命令。未删除已有数据卷，旧 `web-node-modules` 卷不再挂载，也不会自动清理。
 
-CI 在 Windows runner 上运行相同测试，使用 runner 自带 PostgreSQL 二进制建立临时实例；
-不启动容器栈。`test` required check 要求原生测试、静态检查、API Client 和浏览器闭环成功。
+CI 的 PR/push 默认运行无数据库测试、静态检查和 API Client 检查。
+数据库及浏览器集成仅在手动运行时勾选 `full_integration` 执行，使用临时 Windows PostgreSQL，
+不启动容器栈。`test` required check 检查本次选定流程是否通过。
 历史 WINDEV 报告描述当时的验收，不作为当前测试入口。
 
 ## 可选 Hatchet Cloud 集成

@@ -1,25 +1,31 @@
 # 测试约定
 
-本次范围来自用户要求：重构整个测试体系，使用 Windows 数据库，不访问 WSL；
-外部基础设施用模拟替代。覆盖测试入口、fixture、数据库迁移、断言、浏览器流程和 CI，
-不改变业务接口、账本规则或生产部署。当前开放 Issues #14–#16 是阶段三业务任务，
-本次不扩展其真实 GPU/RunPod 工作。
+按用户要求，日常开发默认使用轻量测试，不自动运行数据库集成、迁移、并发压力或浏览器测试。
+外部服务使用模拟；数据库原有用例保留为手动验证，不改变业务接口和账本规则。
 
 ## 执行入口
 
 | 命令 | 验证范围 | 依赖 |
 |---|---|---|
-| `pnpm test` | 所有 Python + Web 单元测试 | Windows PostgreSQL；无需媒体二进制 |
-| `pnpm test:unit` | 配置、Provider 协议、调度逻辑、Storage、脚本 | Python；不访问数据库 |
-| `pnpm test:db` | 真实迁移、约束、业务、幂等、并发 | Windows PostgreSQL |
-| `pnpm test:media` | Provider 元数据、对象存在/非空/大小上限、结果接收 | Python；部分用 PostgreSQL，不启动媒体进程 |
+| `pnpm test` | 无数据库 Python 测试 + Web 单元测试，顺序执行 | Python、pnpm；无需 PostgreSQL |
+| `pnpm test:python` / `pnpm test:unit` | 无数据库的逻辑、元数据、Storage、脚本 | Python |
+| `pnpm test:db` | 仅 4 条核心流程：项目 CRUD、越权、上传下载、Mock 生成输出 | 手动；Windows PostgreSQL |
+| `pnpm test:db:full` | 全部数据库业务、迁移、约束、幂等和并发回归 | 手动；Windows PostgreSQL |
+| `pnpm test:media` | 不依赖数据库的元数据检查 | Python；禁止媒体进程 |
 | `pnpm test:web` | 前端任务状态逻辑 | pnpm |
-| `pnpm test:e2e` | 注册、权限跳转、项目/镜头/生成、固定视频样本加载及刷新 | PostgreSQL、Chromium；不现场编码 |
-| `pnpm test:all` | 上述完整测试 | 全部本机依赖 |
+| `pnpm test:e2e` | 浏览器业务闭环，使用固定媒体样本 | 手动；PostgreSQL、Chromium |
+| `pnpm test:all` | 全部 Python、Web 与 E2E | 手动；全部本机依赖 |
 
-Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.py python -k keyword`。
-根 `pytest.ini` 是唯一收集配置，包含 `apps/api/tests` 和根 `tests`，不再单独跑 unittest。
-`dev.ps1 test/test-api/test-web/e2e` 保留为统一入口的别名。
+普通 Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.py python -k keyword`。
+只有明确涉及数据库行为时才启用，例如：
+`uv run --project apps/api --no-sync python scripts/test.py python apps/api/tests/test_migrations.py --run-db`。
+直接执行 pytest 也默认排除 `database` 用例；必须显式传 `--run-db`。
+只选择数据库用例而未启用时，不会执行测试，也不会计为通过。
+根 `pytest.ini` 是唯一收集配置；`dev.ps1 test/test-api/test-web/e2e` 保留为对应入口的别名。
+
+日常只跑与改动相关的轻量用例；普通业务联调需要数据库时先用 4 条核心流程。
+只有修改迁移、约束、事务或并发逻辑时，才选择相关数据库测试；不再因媒体/文档/类型改动运行整套数据库回归。
+完整数据库和 E2E 在发布前或明确要求时执行，不并行启动多组重测试。
 
 ## 数据隔离
 
@@ -38,7 +44,7 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 
 - RunPod 使用 `httpx.MockTransport`；Hatchet 使用 SDK 接口 fake；发布命令用注入的 runner 记录
   参数和失败，不运行镜像。测试拦截意外的 WSL/Docker、FFmpeg/ffprobe 命令和外网 socket。
-- `database` marker 显式启用数据库隔离。无 marker 的测试使用共享业务 engine 时立即失败。
+- `database` marker 标识数据库测试，`--run-db` 才启用执行与隔离。无 marker 的测试使用共享业务 engine 时立即失败。
 - `client` 是业务便捷 fixture：提交生成后同步驱动 local outbox 并等待任务结束；
   `raw_client` 不代为驱动。后台集成测试真实使用 API lifespan 的 dispatcher，证明自动调度。
 - `media` 测试验证 Provider 元数据、对象基础检查与结果接收；自动测试禁止启动 FFmpeg/ffprobe。
@@ -57,15 +63,15 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 - 并发测试使用起跑屏障、独立请求和真实 PostgreSQL 锁，不通过循环重跑把偶发通过当验收。
 - `.test-runs/<group>-*/` 保留本轮 JUnit、临时文件和服务器日志；浏览器保留失败 trace。
   自动清理数据库 schema 和受管服务，运行产物忽略提交；不扫描或删除其他旧目录。
-- CI 使用 Windows 临时 runner 数据库，与本机入口一致。改造后的远程 CI 需要推送后实际执行，
+- CI 的 PR/push 默认只跑轻量测试和静态检查；手动运行时勾选 `full_integration` 才创建临时数据库并执行完整数据库/E2E。远程 CI 需要推送后实际执行，
   本机通过不能代替远程 CI 运行结果。
 
 ## 验收标准
 
-1. 默认入口覆盖 Python/仓库脚本/Web，定向入口只执行所选层。
-2. Windows PostgreSQL 真实迁移、约束、并发和业务回归通过，无 SQLite 替代。
+1. 默认入口覆盖无数据库的 Python/仓库脚本/Web，定向入口只执行所选层。
+2. 显式启用数据库测试时，只验收选定用例；迁移/约束/并发仍使用 Windows PostgreSQL，无 SQLite 替代。
 3. 外部操作不启动 WSL/Docker；缺依赖、跳过和测试失败不能返回成功。
-4. E2E 使用独立数据和临时服务，验证真实 UI/媒体，不靠重试。
+4. 显式执行 E2E 时使用独立数据和临时服务，不靠重试。
 5. 相关静态检查通过，记录实际结果、局限并本地提交。
 
 ## 之前 FFmpeg 验收移除验证（2026-09-06，非本次运行）
@@ -91,7 +97,7 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 本次没有执行 WSL/Docker、真实 Cloud/GPU 或远程 GitHub Actions；远程 CI 配置需推送后验证。
 
 
-## 媒体哈希与声明大小一致性检查移除（2026-09-06）
+## 之前媒体哈希与声明大小一致性检查移除（2026-09-06，非本次运行）
 
 - 图片上传、生成视频存储、stat 和结果接收不再计算/比对媒体 SHA-256，不比对 Provider 声明大小；实际字节数仍用于大小上限与记录。
 - 保留权限、受控对象键、文件存在、非空、大小上限和基础元数据检查；自动测试继续禁止 FFmpeg/ffprobe 及现场编码。
@@ -100,3 +106,11 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 - Ruff、前端 lint/typecheck、生成客户端一致性和 Git 差异检查通过。
 - 完整回归 `pnpm test`：Python **342 passed，1 deselected**（386.75 秒），前端 **14 passed**；包含 Windows PostgreSQL 的结果接收、工作流及迁移回归。
 - 本轮未运行 E2E、真实 GPU、WSL/Docker 或媒体编码/解码进程。
+
+
+## 日常数据库测试简化验证（2026-09-06）
+
+- 将 DATABASE_URL 和 TEST_DATABASE_URL 都设为不可用地址，执行新的 `pnpm test`：Python **231 passed，121 deselected，15.84 秒**；Web **14 passed，1.38 秒**。
+- 默认排除数据库/live/平台不适用用例；不把排除项计为通过。选择规则回归以临时假用例验证 `--run-db` 的开关行为，不连接数据库。
+- `test:db` 的 4 个目标已检查存在，完整入口仍保留所有数据库用例；本次没有执行数据库集成、迁移、E2E 或媒体进程。
+- Ruff、Git 差异检查、package/CI 配置语法与 CI 集成步骤的手动条件检查通过。远程 CI 尚未运行。

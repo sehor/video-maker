@@ -60,7 +60,7 @@ def test_unit_entrypoint_does_not_inspect_database(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "run", lambda args, *rest: calls.append(args))
     assert runner.main(["unit"]) == 0
     assert len(calls) == 1
-    assert "not database and not live and not media" in calls[0]
+    assert "not database and not live" in calls[0]
 
 
 @pytest.mark.parametrize("command", [["wsl.exe", "--status"], ["docker", "ps"]])
@@ -95,3 +95,45 @@ def test_unexecuted_or_failing_test_cannot_report_success(tmp_path, body):
         env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
     )
     assert result.returncode == 1, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("group", ["test", "python", "unit", "media"])
+def test_daily_entrypoints_do_not_enable_database(tmp_path, monkeypatch, group):
+    calls = []
+    monkeypatch.setattr(runner, "run", lambda args, *rest: calls.append(args))
+    runner.python_tests(group, {}, tmp_path, [])
+    assert "--run-db" not in calls[0]
+
+
+@pytest.mark.parametrize("group", ["db", "db-full", "all"])
+def test_explicit_database_entrypoints_select_requested_scope(tmp_path, monkeypatch, group):
+    calls = []
+    monkeypatch.setattr(runner, "run", lambda args, *rest: calls.append(args))
+    runner.python_tests(group, {}, tmp_path, [])
+    assert "--run-db" in calls[0]
+    selected_paths = [arg for arg in calls[0] if "::test_" in arg]
+    assert selected_paths == (list(runner.DB_SMOKE_TESTS) if group == "db" else [])
+
+
+@pytest.mark.parametrize("enable_database", [False, True])
+def test_pytest_database_collection_requires_explicit_opt_in(tmp_path, enable_database):
+    (tmp_path / "conftest.py").write_text((ROOT / "conftest.py").read_text(), encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\nmarkers =\n    database: integration test\n", encoding="utf-8"
+    )
+    (tmp_path / "test_probe.py").write_text(
+        "from pathlib import Path\nimport pytest\n"
+        "def test_unit(): pass\n"
+        "@pytest.mark.database\n"
+        "def test_database(): Path('db-ran').touch()\n", encoding="utf-8"
+    )
+    # This synthetic database-marked test never connects to a database.
+    args = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    if enable_database:
+        args.append("--run-db")
+    result = subprocess.run(
+        args, cwd=tmp_path, capture_output=True, text=True, timeout=15,
+        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "db-ran").exists() == enable_database
