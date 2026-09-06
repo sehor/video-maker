@@ -190,8 +190,14 @@ def test_submit_rejects_request_outside_fixed_contract_without_network_call(
     assert calls == 0
 
 
-def test_poll_maps_success_with_provenance_timings_and_artifact() -> None:
+@pytest.mark.parametrize(
+    "legacy", [{}, {"size_bytes": 0, "sha256": "ignored"}, {"size_bytes": None, "sha256": None}]
+)
+def test_poll_maps_success_with_provenance_timings_and_artifact(legacy) -> None:
     worker_output = load_fixture("response-success.json")
+    worker_output["output"].pop("size_bytes", None)
+    worker_output["output"].pop("sha256", None)
+    worker_output["output"].update(legacy)
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/status/runpod-job-1")
@@ -213,9 +219,12 @@ def test_poll_maps_success_with_provenance_timings_and_artifact() -> None:
     assert result.status == ProviderStatus.SUCCEEDED
     assert result.output is not None
     assert result.output.content is None
+    assert result.output.sha256 is None
     assert result.output.object_key == f"outputs/{ATTEMPT_ID}.mp4"
     assert (result.output.duration_ms, result.output.width, result.output.height) == (
-        5000, 1280, 720,
+        5000,
+        1280,
+        720,
     )
     assert (result.output.fps, result.output.codec) == (16, "h264")
     assert result.output.metrics is not None
@@ -233,9 +242,14 @@ def test_poll_rejects_legacy_response_missing_media_metadata(field) -> None:
     worker_output["output"].pop(field)
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={
-            "id": "runpod-job-1", "status": "COMPLETED", "output": worker_output,
-        })
+        return httpx.Response(
+            200,
+            json={
+                "id": "runpod-job-1",
+                "status": "COMPLETED",
+                "output": worker_output,
+            },
+        )
 
     provider, client = provider_with_handler(httpx.MockTransport(handler))
     result = asyncio.run(provider.poll(attempt()))

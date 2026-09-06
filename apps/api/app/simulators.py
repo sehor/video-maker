@@ -116,7 +116,7 @@ class FakeObjectMetadata:
     key: str
     mime_type: str
     size_bytes: int
-    sha256: str
+    sha256: str | None
     etag: str
     created_at: datetime
 
@@ -139,13 +139,12 @@ class FakeRemoteBackend:
         if key in self._objects:
             raise FileExistsError(key)
         body = bytes(content)
-        digest = hashlib.sha256(body).hexdigest()
         metadata = FakeObjectMetadata(
             key=key,
             mime_type=mime_type,
             size_bytes=len(body),
-            sha256=digest,
-            etag=f'"{digest}"',
+            sha256=None,
+            etag=f'"{uuid.uuid4().hex}"',
             created_at=self._clock().astimezone(UTC),
         )
         self._objects[key] = (body, metadata)

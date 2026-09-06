@@ -1632,7 +1632,14 @@
             "title": "Size Bytes"
           },
           "sha256": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Sha256"
           },
           "validation_status": {
@@ -1832,7 +1839,14 @@
             "title": "Size Bytes"
           },
           "sha256": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Sha256"
           },
           "status": {

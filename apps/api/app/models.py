@@ -324,7 +324,7 @@ class ProjectAsset(Base, TimestampMixin):
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     media_type: Mapped[str] = mapped_column(String(100), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[ProjectAssetStatus] = mapped_column(
         Enum(ProjectAssetStatus, native_enum=False, length=24),
         default=ProjectAssetStatus.READY,
@@ -948,7 +948,7 @@ class GenerationOutput(Base, TimestampMixin):
     fps: Mapped[float | None] = mapped_column(Numeric(8, 3, asdecimal=False))
     codec: Mapped[str | None] = mapped_column(String(50))
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     validation_status: Mapped[OutputValidationStatus] = mapped_column(
         Enum(OutputValidationStatus, native_enum=False, length=24),
         default=OutputValidationStatus.PENDING,

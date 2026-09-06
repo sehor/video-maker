@@ -28,14 +28,14 @@ class StoredObject:
     key: str
     mime_type: str
     size_bytes: int
-    sha256: str
+    sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ObjectStat:
     key: str
     size_bytes: int
-    sha256: str
+    sha256: str | None = None
 
 
 class ClaimOperation(StrEnum):
@@ -242,12 +242,11 @@ class ClaimingObjectStorage:
         if claimed_mime_type != mime_type or not isinstance(max_bytes, int):
             raise ApiError(403, "STORAGE_CLAIM_FORBIDDEN", "存储写入声明与内容不匹配")
         body = self._read_content(content, max_bytes)
-        digest = hashlib.sha256(body).hexdigest()
         try:
             self._put_bytes(claim.object_key, body, mime_type)
         except FileExistsError as exc:
             raise ApiError(409, "STORAGE_OBJECT_EXISTS", "存储对象已存在") from exc
-        return StoredObject(claim.object_key, mime_type, len(body), digest)
+        return StoredObject(claim.object_key, mime_type, len(body))
 
     def open(self, claim: StorageClaim) -> BinaryIO:
         self._claims.verify(claim, ClaimOperation.READ)
@@ -363,11 +362,7 @@ class LocalObjectStorage(ClaimingObjectStorage):
         path = self._path_for(key)
         if not path.is_file():
             return None
-        digest = hashlib.sha256()
-        with path.open("rb") as source:
-            while chunk := source.read(READ_CHUNK_BYTES):
-                digest.update(chunk)
-        return ObjectStat(key, path.stat().st_size, digest.hexdigest())
+        return ObjectStat(key, path.stat().st_size)
 
     def _delete_object(self, key: str) -> None:
         self._path_for(key).unlink(missing_ok=True)

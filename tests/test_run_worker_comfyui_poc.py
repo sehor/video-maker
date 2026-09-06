@@ -273,9 +273,15 @@ class RunWorkerPocTests(unittest.TestCase):
         facts = run_worker_poc.validate_media(media, "16:9", metadata)
         self.assertEqual(facts["validation_method"], "provider_metadata")
         self.assertEqual((facts["width"], facts["height"]), (1280, 720))
-        for invalid in ({"size_bytes": 0}, {"codec": "vp9"}, {"duration_ms": 0}, {"fps": 0}):
+        run_worker_poc.validate_media(
+            media, "16:9", {**metadata, "size_bytes": 0, "sha256": "ignored"}
+        )
+        for invalid in ({"codec": "vp9"}, {"duration_ms": 0}, {"fps": 0}):
             with self.subTest(invalid=invalid), self.assertRaises(run_worker_poc.PocError):
                 run_worker_poc.validate_media(media, "16:9", {**metadata, **invalid})
+        media.write_bytes(b"")
+        with self.assertRaises(run_worker_poc.PocError):
+            run_worker_poc.validate_media(media, "16:9", metadata)
 
     def test_evidence_template_contains_all_gate_sections(self) -> None:
         path = ROOT / "workers" / "runpod-comfyui" / "evidence-template.json"

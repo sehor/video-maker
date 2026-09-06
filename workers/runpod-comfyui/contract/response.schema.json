@@ -38,7 +38,7 @@
     "output": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["claim", "object_key", "media_type", "size_bytes", "sha256",
+      "required": ["claim", "object_key", "media_type",
                    "duration_ms", "width", "height", "fps", "codec"],
       "properties": {
         "claim": {
@@ -57,8 +57,8 @@
         "height": { "type": "integer", "minimum": 1 },
         "fps": { "type": "number", "exclusiveMinimum": 0, "maximum": 240 },
         "codec": { "type": "string", "minLength": 1, "maxLength": 32 },
-        "size_bytes": { "type": "integer", "minimum": 1 },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "size_bytes": { "type": ["integer", "null"], "deprecated": true },
+        "sha256": { "type": ["string", "null"], "deprecated": true }
       }
     },
     "metrics": {

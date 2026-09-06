@@ -59,11 +59,13 @@ def test_empty_database_upgrades_to_head(migration_database) -> None:
     assert {"assets", "jobs", "attempts", "outputs"}.isdisjoint(tables)
     with engine.connect() as connection:
         triggers = set(
-            connection.scalars(text(
-                "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = current_schema() AND NOT t.tgisinternal"
-            ))
+            connection.scalars(
+                text(
+                    "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE n.nspname = current_schema() AND NOT t.tgisinternal"
+                )
+            )
         )
     assert {
         "ledger_postings_immutable",
@@ -238,3 +240,56 @@ def test_stage_one_database_upgrades_destructively_and_keeps_projects_and_shots(
     with engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM quality_tiers")) == 3
         assert connection.scalar(text("SELECT count(*) FROM price_versions")) == 4
+
+
+def test_optional_media_hash_migration_preserves_legacy_data(migration_database) -> None:
+    database_url, engine = migration_database
+    config = alembic_config(database_url)
+    command.upgrade(config, "0011_control_plane_recovery")
+    user_id, project_id, asset_id = [uuid.uuid4() for _ in range(3)]
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO app_users (id, auth_subject) VALUES (:id, 'legacy-media-owner')"),
+            {"id": user_id},
+        )
+        connection.execute(
+            text("INSERT INTO projects (id, owner_id, name) VALUES (:id, :owner, 'legacy-media')"),
+            {"id": project_id, "owner": user_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO project_assets "
+                "(id, project_id, owner_id, object_key, original_filename, "
+                "media_type, size_bytes, sha256, status) "
+                "VALUES (:id, :project, :owner, 'assets/legacy.png', "
+                "'legacy.png', 'image/png', 12, :sha, 'READY')"
+            ),
+            {"id": asset_id, "project": project_id, "owner": user_id, "sha": "a" * 64},
+        )
+    command.upgrade(config, "head")
+    for table in ("project_assets", "generation_outputs"):
+        assert next(c for c in inspect(engine).get_columns(table) if c["name"] == "sha256")[
+            "nullable"
+        ]
+    with engine.begin() as connection:
+        assert (
+            connection.scalar(
+                text("SELECT sha256 FROM project_assets WHERE id = :id"), {"id": asset_id}
+            )
+            == "a" * 64
+        )
+        connection.execute(
+            text("UPDATE project_assets SET sha256 = NULL WHERE id = :id"), {"id": asset_id}
+        )
+    with pytest.raises(RuntimeError, match="unhashed media exists"):
+        command.downgrade(config, "0011_control_plane_recovery")
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE project_assets SET sha256 = :sha WHERE id = :id"),
+            {"id": asset_id, "sha": "a" * 64},
+        )
+    command.downgrade(config, "0011_control_plane_recovery")
+    for table in ("project_assets", "generation_outputs"):
+        assert not next(c for c in inspect(engine).get_columns(table) if c["name"] == "sha256")[
+            "nullable"
+        ]

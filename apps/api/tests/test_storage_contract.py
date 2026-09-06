@@ -48,7 +48,7 @@ class FakeRemoteBackend:
         content = self.objects.get(key)
         if content is None:
             return None
-        return ObjectStat(key, len(content), hashlib.sha256(content).hexdigest())
+        return ObjectStat(key, len(content))
 
     def delete(self, key: str) -> None:
         self.objects.pop(key, None)
@@ -69,6 +69,29 @@ def storage_factory(request: pytest.FixtureRequest, tmp_path: Path) -> StorageFa
 def put_png(store: ObjectStorage, *, namespace: str = "assets"):
     claim = store.write_claim(namespace, mime_type="image/png", max_bytes=len(PNG))
     return store.put(claim, PNG, "image/png")
+
+
+def test_media_storage_does_not_hash_content_or_read_it_for_stat(tmp_path, monkeypatch):
+    original_sha256 = hashlib.sha256
+
+    def guarded_sha256(data=b"", *args, **kwargs):
+        assert not data, "Media content must not be hashed"
+        return original_sha256(data, *args, **kwargs)
+
+    # Claim signatures may still construct an empty digest and update it via HMAC.
+    monkeypatch.setattr(hashlib, "sha256", guarded_sha256)
+    store = LocalObjectStorage(tmp_path / "objects", CLAIM_SECRET)
+    stored = put_png(store)
+    assert stored.sha256 is None
+
+    def reject_open(*args, **kwargs):
+        raise AssertionError("Stat must not read media content")
+
+    monkeypatch.setattr(Path, "open", reject_open)
+    stat = store.stat(stored.key)
+    assert stat.size_bytes == len(PNG)
+    assert stat.sha256 is None
+    assert store.read_claim(stored.key)
 
 
 def assert_error_code(code: str, operation: Callable[[], object]) -> None:

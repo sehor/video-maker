@@ -530,7 +530,7 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
             /** Sha256 */
-            sha256: string;
+            sha256: string | null;
             validation_status: components["schemas"]["OutputValidationStatus"];
         };
         /** HTTPValidationError */
@@ -623,7 +623,7 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
             /** Sha256 */
-            sha256: string;
+            sha256: string | null;
             status: components["schemas"]["ProjectAssetStatus"];
             /**
              * Created At

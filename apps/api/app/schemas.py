@@ -102,7 +102,7 @@ class ProjectAssetOut(OrmModel):
     original_filename: str
     media_type: str
     size_bytes: int
-    sha256: str
+    sha256: str | None
     status: ProjectAssetStatus
     created_at: datetime
 
@@ -246,7 +246,7 @@ class GenerationOutputOut(OrmModel):
     fps: float | None
     codec: str | None
     size_bytes: int
-    sha256: str
+    sha256: str | None
     validation_status: OutputValidationStatus
 
 

@@ -138,7 +138,7 @@ def test_readiness_distinguishes_dependencies_and_migration_head(migration_datab
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64))"))
         connection.execute(
-            text("INSERT INTO alembic_version VALUES ('0011_control_plane_recovery')")
+            text("INSERT INTO alembic_version VALUES ('0012_optional_media_hashes')")
         )
 
     ready = ReadinessService(factory, lambda: True, lambda: True).check()

@@ -112,8 +112,9 @@ class _WorkerArtifact(_StrictModel):
     height: int = Field(gt=0)
     fps: float = Field(gt=0, le=240, allow_inf_nan=False)
     codec: str = Field(min_length=1, max_length=32)
-    size_bytes: int = Field(gt=0)
-    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    # Legacy declarations are accepted for compatibility, never used for acceptance.
+    size_bytes: int | None = None
+    sha256: str | None = None
 
     @model_validator(mode="after")
     def reject_unsafe_object_key(self) -> _WorkerArtifact:
@@ -439,7 +440,6 @@ class RunPodVideoProvider:
                 codec=artifact.codec,
                 object_key=artifact.object_key,
                 size_bytes=artifact.size_bytes,
-                sha256=artifact.sha256,
                 metrics=metrics,
                 versions=version_snapshot,
             ),

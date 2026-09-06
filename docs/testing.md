@@ -12,7 +12,7 @@
 | `pnpm test` | 所有 Python + Web 单元测试 | Windows PostgreSQL；无需媒体二进制 |
 | `pnpm test:unit` | 配置、Provider 协议、调度逻辑、Storage、脚本 | Python；不访问数据库 |
 | `pnpm test:db` | 真实迁移、约束、业务、幂等、并发 | Windows PostgreSQL |
-| `pnpm test:media` | Provider 元数据、对象大小/SHA-256、结果接收 | Python；部分用 PostgreSQL，不启动媒体进程 |
+| `pnpm test:media` | Provider 元数据、对象存在/非空/大小上限、结果接收 | Python；部分用 PostgreSQL，不启动媒体进程 |
 | `pnpm test:web` | 前端任务状态逻辑 | pnpm |
 | `pnpm test:e2e` | 注册、权限跳转、项目/镜头/生成、固定视频样本加载及刷新 | PostgreSQL、Chromium；不现场编码 |
 | `pnpm test:all` | 上述完整测试 | 全部本机依赖 |
@@ -41,7 +41,7 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 - `database` marker 显式启用数据库隔离。无 marker 的测试使用共享业务 engine 时立即失败。
 - `client` 是业务便捷 fixture：提交生成后同步驱动 local outbox 并等待任务结束；
   `raw_client` 不代为驱动。后台集成测试真实使用 API lifespan 的 dispatcher，证明自动调度。
-- `media` 测试验证 Provider 元数据、对象完整性与结果接收；自动测试禁止启动 FFmpeg/ffprobe。
+- `media` 测试验证 Provider 元数据、对象基础检查与结果接收；自动测试禁止启动 FFmpeg/ffprobe。
   不逐帧解码，不把声明合法标记为“已证明可播放”；E2E 继续检查浏览器实际加载固定样本。
   Mock 视频样本已由旧 MPEG-4 Part 2 重建为 H.264、2 秒、25 fps，且与 Mock 元数据一致。
 - 真实 Cloud 是显式 `dev.ps1 test-hatchet` 验证，不属于默认测试；缺凭据必须失败。
@@ -68,13 +68,13 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 4. E2E 使用独立数据和临时服务，验证真实 UI/媒体，不靠重试。
 5. 相关静态检查通过，记录实际结果、局限并本地提交。
 
-## FFmpeg 验收移除验证（2026-09-06）
+## 之前 FFmpeg 验收移除验证（2026-09-06，非本次运行）
 
 - 元数据、RunPod 适配器、Worker 契约及脚本定向回归：81 passed，8.91s。
 - Windows PostgreSQL 结果接收与后台工作流：11 passed，46.56s；一条 pytest 缓存目录权限警告不影响测试结果。
 - 最后补充的媒体进程拦截与契约检查：7 passed，18 deselected，1.17s（与前组有重叠，不相加）。
 - 相关 Python Ruff 检查、Git 差异检查通过；未运行 FFmpeg/ffprobe、WSL/Docker、真实 GPU 或前端构建。
-- 控制面和 POC 接收均只检查元数据；现有下载、SHA-256 校验和发布的文件 I/O 仍然存在，本次未声称消除这部分成本。
+- 此次历史改造仍保留大小/SHA-256 一致性校验；后续取消规则见下方媒体哈希移除记录。
 
 ## 之前测试重构时的验证（2026-09-06，非本次运行）
 
@@ -89,3 +89,14 @@ Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.p
 完整 Python 回归本轮为 459.73 秒，同时进行了 E2E 构建及类型检查；这不是独占机器的性能基准。
 快速开发可使用分层入口，完整回归仍保留真实 PostgreSQL、媒体和并发检查。
 本次没有执行 WSL/Docker、真实 Cloud/GPU 或远程 GitHub Actions；远程 CI 配置需推送后验证。
+
+
+## 媒体哈希与声明大小一致性检查移除（2026-09-06）
+
+- 图片上传、生成视频存储、stat 和结果接收不再计算/比对媒体 SHA-256，不比对 Provider 声明大小；实际字节数仍用于大小上限与记录。
+- 保留权限、受控对象键、文件存在、非空、大小上限和基础元数据检查；自动测试继续禁止 FFmpeg/ffprobe 及现场编码。
+- 旧 sha256 值保留，新媒体返回 null；Worker 可省略旧 size_bytes/sha256 字段。OpenAPI 与 TypeScript 客户端同步生成。
+- 0012 迁移兼容历史记录，已在独立测试库验证升级及有空值时拒绝降级；本地开发库已迁移，原生开发检查通过。
+- Ruff、前端 lint/typecheck、生成客户端一致性和 Git 差异检查通过。
+- 完整回归 `pnpm test`：Python **342 passed，1 deselected**（386.75 秒），前端 **14 passed**；包含 Windows PostgreSQL 的结果接收、工作流及迁移回归。
+- 本轮未运行 E2E、真实 GPU、WSL/Docker 或媒体编码/解码进程。

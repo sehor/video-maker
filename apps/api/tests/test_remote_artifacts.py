@@ -74,7 +74,7 @@ class ArtifactProvider:
             claim = self._storage.write_claim(
                 f"provider-outputs/{request.job_id}/{request.attempt_id}",
                 mime_type="video/mp4",
-                max_bytes=len(self._content),
+                max_bytes=max(1, len(self._content)),
             )
             stored = self._storage.put(claim, self._content, "video/mp4")
             output = ProviderOutput(
@@ -256,8 +256,6 @@ def test_valid_remote_artifact_publishes_and_settles_once(
         ({"duration_ms": None}, None, None, "OUTPUT_INVALID_MEDIA"),
         ({"width": 1920}, None, None, "OUTPUT_INVALID_MEDIA"),
         ({"codec": "vp9"}, None, None, "OUTPUT_INVALID_MEDIA"),
-        ({}, 1, None, "OUTPUT_CORRUPTED"),
-        ({}, None, "0" * 64, "OUTPUT_CORRUPTED"),
     ],
 )
 def test_invalid_remote_artifact_fails_refunds_and_never_publishes(
@@ -319,6 +317,27 @@ def test_uncontrolled_object_key_is_rejected_before_download(
         )
         assert attempt is not None
         assert attempt.status.value == "FAILED_FINAL"
+
+
+def test_legacy_hash_and_size_declarations_do_not_gate_acceptance(raw_client):
+    content = b"opaque-provider-video"
+    job_id, _, _ = _execute(raw_client, content, size_bytes=1, sha256="not-a-media-hash")
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, job_id)
+        assert job.status == JobStatus.SUCCEEDED
+        assert job.settlement_status == SettlementStatus.SETTLED
+        output = db.get(GenerationOutput, job.final_output_id)
+        assert output.size_bytes == len(content)
+        assert output.sha256 is None
+
+
+def test_empty_remote_object_is_rejected(raw_client):
+    job_id, _, _ = _execute(raw_client, b"")
+    with SessionLocal() as db:
+        job = db.get(GenerationJob, job_id)
+        assert job.status == JobStatus.FAILED_FINAL
+        assert job.settlement_status == SettlementStatus.RELEASED
+        assert job.final_output_id is None
 
 
 pytestmark = [pytest.mark.database, pytest.mark.media]

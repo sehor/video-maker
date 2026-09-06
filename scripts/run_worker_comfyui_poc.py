@@ -366,8 +366,8 @@ def validate_media(path: Path, aspect_ratio: str, metadata: dict[str, Any]) -> d
     """Check declarations and file size only; generation stays on the rented worker."""
     expected = (1280, 720) if aspect_ratio == "16:9" else (720, 1280)
     size_bytes = path.stat().st_size
-    if not 0 < size_bytes <= MAX_MEDIA_BYTES or size_bytes != metadata.get("size_bytes"):
-        raise PocError("POC output size does not match its metadata")
+    if not 0 < size_bytes <= MAX_MEDIA_BYTES:
+        raise PocError("POC output is empty or exceeds the size limit")
     if (metadata.get("media_type") != "video/mp4"
             or metadata.get("codec") != "h264"
             or type(metadata.get("width")) is not int

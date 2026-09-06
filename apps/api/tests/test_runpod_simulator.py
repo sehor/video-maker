@@ -227,7 +227,8 @@ def test_fake_remote_storage_has_signed_claims_and_stable_object_metadata() -> N
         stored.size_bytes,
         stored.sha256,
     )
-    assert metadata.etag == f'"{stored.sha256}"'
+    assert metadata.etag
+    assert metadata.sha256 is None
     assert metadata.created_at == clock()
     assert storage.keys() == (stored.key,)
 

@@ -19,7 +19,7 @@ def test_upload_and_private_download(client: TestClient) -> None:
     assert asset["original_filename"] == "reference.png"
     assert asset["media_type"] == "image/png"
     assert asset["status"] == "READY"
-    assert len(asset["sha256"]) == 64
+    assert asset["sha256"] is None
     assert (
         client.get(
             f"/v1/assets/{asset['id']}/content", headers={"x-test-user": "owner"}

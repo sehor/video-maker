@@ -107,11 +107,17 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
         require_exact_fields(
             output,
             frozenset(
-                {"claim", "object_key", "media_type", "size_bytes", "sha256",
+                {"claim", "object_key", "media_type",
                  "duration_ms", "width", "height", "fps", "codec"}
+                | ({"size_bytes", "sha256"} & output.keys())
             ),
             "output",
         )
+        # Optional legacy fields retain their wire types but are never compared.
+        if output.get("size_bytes") is not None and type(output["size_bytes"]) is not int:
+            raise ContractError("output.size_bytes must be an integer or null")
+        if output.get("sha256") is not None and not isinstance(output["sha256"], str):
+            raise ContractError("output.sha256 must be a string or null")
         for field in ("duration_ms", "width", "height"):
             require_nonnegative_int(output[field], f"output.{field}")
             if output[field] == 0:
@@ -131,11 +137,6 @@ def validate_response(value: dict[str, Any], workflow_sha256: str) -> None:
             raise ContractError("output.object_key is invalid")
         if output["media_type"] != "video/mp4":
             raise ContractError("output must be video/mp4")
-        require_nonnegative_int(output["size_bytes"], "output.size_bytes")
-        if output["size_bytes"] == 0 or not SHA256_PATTERN.fullmatch(
-            output["sha256"]
-        ):
-            raise ContractError("output metadata is incomplete")
     else:
         if value["output"] is not None or not isinstance(value["error"], dict):
             raise ContractError("failed response must contain only error")
