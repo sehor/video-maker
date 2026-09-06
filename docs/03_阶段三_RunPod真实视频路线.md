@@ -136,7 +136,7 @@ Control Plane 必须：
 - [ ] 5 秒 720p、9:16／16:9 稳定成功；
 - [ ] 用户不能提交任意 workflow、模型、节点或 URL；
 - [ ] webhook／polling 重放不会重复完成或结算；
-- [ ] Worker 成功但媒体损坏时不会结算；
+- [ ] Worker 成功但必需元数据缺失/非法、对象大小或 SHA-256 不一致时不会结算；仅解码可发现的损坏不在同步验收范围；
 - [ ] 中断后任务可恢复或正确返还；
 - [ ] 每个输出可追溯到 Attempt、Worker、workflow 和模型哈希；
 - [ ] Benchmark 和成本记录完整；
@@ -152,7 +152,7 @@ Issue #14 固定使用 worker-comfyui `5.8.7`（commit
 不接受 workflow JSON、节点、模型、代码或任意 URL。
 
 在独立 RunPod 凭据和成本授权前，该 Worker 保持 `CONDITIONAL`，不得启用路线。
-镜像 digest、模型 SHA-256、5 秒横竖屏真实输出、FFmpeg 校验、冷启动、运行时间、成本、
+镜像 digest、模型 SHA-256、5 秒横竖屏真实输出、元数据与对象完整性校验、冷启动、运行时间、成本、
 失败记录和继续／拒绝结论必须在获批的真实 POC 后补齐。
 
 Issue #14 收尾时仍没有 RunPod 凭据和费用授权，用户明确选择跳过真实付费 POC 并继续

@@ -9,12 +9,12 @@
 
 | 命令 | 验证范围 | 依赖 |
 |---|---|---|
-| `pnpm test` | 所有 Python + Web 单元测试 | Windows PostgreSQL、FFmpeg |
+| `pnpm test` | 所有 Python + Web 单元测试 | Windows PostgreSQL；无需媒体二进制 |
 | `pnpm test:unit` | 配置、Provider 协议、调度逻辑、Storage、脚本 | Python；不访问数据库 |
-| `pnpm test:db` | 真实迁移、约束、业务、幂等、并发 | Windows PostgreSQL、FFmpeg |
-| `pnpm test:media` | 真实解码、无效媒体、超时、进程清理 | FFmpeg；部分用 PostgreSQL |
+| `pnpm test:db` | 真实迁移、约束、业务、幂等、并发 | Windows PostgreSQL |
+| `pnpm test:media` | Provider 元数据、对象大小/SHA-256、结果接收 | Python；部分用 PostgreSQL，不启动媒体进程 |
 | `pnpm test:web` | 前端任务状态逻辑 | pnpm |
-| `pnpm test:e2e` | 注册、权限跳转、项目/镜头/生成、视频加载及刷新 | PostgreSQL、FFmpeg、Chromium |
+| `pnpm test:e2e` | 注册、权限跳转、项目/镜头/生成、固定视频样本加载及刷新 | PostgreSQL、Chromium；不现场编码 |
 | `pnpm test:all` | 上述完整测试 | 全部本机依赖 |
 
 Python 定向测试：`uv run --project apps/api --no-sync python scripts/test.py python -k keyword`。
