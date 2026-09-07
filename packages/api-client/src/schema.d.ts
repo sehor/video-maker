@@ -726,7 +726,7 @@ export interface components {
         /** ProjectUpdate */
         ProjectUpdate: {
             /** Name */
-            name?: string | null;
+            name?: string;
             /** Description */
             description?: string | null;
         };
@@ -900,13 +900,16 @@ export interface components {
         /** ShotUpdate */
         ShotUpdate: {
             /** Title */
-            title?: string | null;
+            title?: string;
             /** Prompt */
-            prompt?: string | null;
+            prompt?: string;
             /** Duration Seconds */
-            duration_seconds?: number | null;
-            /** Aspect Ratio */
-            aspect_ratio?: ("16:9" | "9:16") | null;
+            duration_seconds?: number;
+            /**
+             * Aspect Ratio
+             * @enum {string}
+             */
+            aspect_ratio?: "16:9" | "9:16";
         };
         /** ValidationError */
         ValidationError: {

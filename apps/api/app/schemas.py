@@ -36,7 +36,8 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
+    # Omission is allowed; explicit null is not. PATCH uses exclude_unset.
+    name: str = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=2000)
 
 
@@ -61,10 +62,10 @@ class ShotCreate(BaseModel):
 
 
 class ShotUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=120)
-    prompt: str | None = Field(default=None, min_length=1, max_length=4000)
-    duration_seconds: int | None = Field(default=None, ge=1, le=10)
-    aspect_ratio: Literal["16:9", "9:16"] | None = None
+    title: str = Field(default=None, min_length=1, max_length=120)
+    prompt: str = Field(default=None, min_length=1, max_length=4000)
+    duration_seconds: int = Field(default=None, ge=1, le=10)
+    aspect_ratio: Literal["16:9", "9:16"] = Field(default=None)
 
 
 class ShotReferenceCreate(BaseModel):

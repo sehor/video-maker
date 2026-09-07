@@ -2206,16 +2206,9 @@
       "ProjectUpdate": {
         "properties": {
           "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 120,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Name"
           },
           "description": {
@@ -2570,56 +2563,28 @@
       "ShotUpdate": {
         "properties": {
           "title": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 120,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
             "title": "Title"
           },
           "prompt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 4000,
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
             "title": "Prompt"
           },
           "duration_seconds": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "maximum": 10.0,
-                "minimum": 1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
             "title": "Duration Seconds"
           },
           "aspect_ratio": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "16:9",
-                  "9:16"
-                ]
-              },
-              {
-                "type": "null"
-              }
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16"
             ],
             "title": "Aspect Ratio"
           }
