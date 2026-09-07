@@ -115,6 +115,7 @@ class ProjectStatus(str, enum.Enum):
 
 
 class StorageCleanupObjectKind(str, enum.Enum):
+    PROVIDER = "PROVIDER"
     ASSET = "ASSET"
     OUTPUT = "OUTPUT"
 
@@ -296,9 +297,30 @@ class StorageCleanupObject(Base, TimestampMixin):
     )
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    not_before: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_error: Mapped[str | None] = mapped_column(Text)
 
     event: Mapped[StorageCleanupEvent] = relationship(back_populates="objects")
+
+
+class ProviderArtifact(Base, TimestampMixin):
+    __tablename__ = "provider_artifacts"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_jobs.id"), index=True)
+    attempt_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("generation_attempts.id"))
+    object_key: Mapped[str] = mapped_column(String(512), unique=True)
+    kind: Mapped[str] = mapped_column(String(8))
+    retain_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[OutboxStatus] = mapped_column(
+        Enum(OutboxStatus, native_enum=False, length=16), default=OutboxStatus.PENDING)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lock_token: Mapped[str | None] = mapped_column(String(36))
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class Shot(Base, TimestampMixin):

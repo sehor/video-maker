@@ -50,7 +50,14 @@ class ProviderSubmissionService:
             mime_type="video/mp4",
             max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
             expires_in=self._claim_ttl,
-        ).token
+        )
+        self._record_artifact(
+            context.job_id,
+            context.attempt_id,
+            output_claim.object_key,
+            "SOURCE",
+            expires_at=output_claim.expires_at,
+        )
         callback_claim = self._callback_claims.issue(
             job_id=context.job_id,
             attempt_id=context.attempt_id,
@@ -68,7 +75,7 @@ class ProviderSubmissionService:
             resolution=context.resolution.lower(),
             workflow_id=context.workflow_version,
             input_claim=input_claim,
-            output_claim=output_claim,
+            output_claim=output_claim.token,
             callback_claim=callback_claim,
             mode=context.mode,
         )

@@ -20,6 +20,7 @@ from app.models import (
     ProjectAsset,
     ProjectAssetStatus,
     ProjectStatus,
+    ProviderArtifact,
     Shot,
     StorageCleanupEvent,
     StorageCleanupObject,
@@ -180,7 +181,10 @@ def test_project_delete_is_soft_idempotent_and_preserves_audit_history(
 
     event, objects = cleanup_state(project_id)
     assert event.status == OutboxStatus.PENDING
-    assert {item.object_key for item in objects} == output_keys
+    with SessionLocal() as db:
+        registered_keys = set(db.scalars(select(ProviderArtifact.object_key).where(
+            ProviderArtifact.project_id == project_id)))
+    assert {item.object_key for item in objects} == output_keys | registered_keys
 
 
 def test_project_with_active_job_cannot_be_deleted(raw_client: TestClient) -> None:

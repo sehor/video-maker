@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
 from app.accepted_input import capture_input, selected_references
+from app.artifact_lifecycle import ArtifactCleanupDispatcher
 from app.auth import CurrentUser
 from app.config import get_settings
 from app.db import SessionLocal, get_db
@@ -199,6 +200,9 @@ async def dispatch_provider_cancel_outbox() -> DispatchResult:
 
 
 async def dispatch_storage_cleanup_outbox() -> DispatchResult:
+    artifact_result = await ArtifactCleanupDispatcher(SessionLocal, storage()).dispatch_once()
+    if artifact_result != DispatchResult.IDLE:
+        return artifact_result
     return await StorageCleanupDispatcher(
         SessionLocal,
         storage(),

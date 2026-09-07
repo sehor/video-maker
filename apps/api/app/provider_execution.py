@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.artifact_lifecycle import register_artifact
 from app.artifacts import RemoteArtifactReceiver
 from app.config import get_settings
 from app.db import SessionLocal
@@ -91,6 +92,20 @@ class GenerationExecutionService(
             storage,
             media_validator or MediaValidator(),
             max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
+            register_write=lambda job, attempt, key: self._record_artifact(
+                job, attempt, key, "FINAL"
+            ),
+        )
+
+    def _record_artifact(self, job_id, attempt_id, key, kind, *, expires_at=None):
+        register_artifact(
+            self._session_factory,
+            job_id,
+            attempt_id,
+            key,
+            kind,
+            expires_at=expires_at,
+            clock=self._clock,
         )
 
     def _provider_for(self, provider_code: str) -> VideoProvider:
@@ -198,9 +213,7 @@ class GenerationExecutionService(
             return
         provider = self._provider_for(context.provider_code)
         try:
-            result = await provider.cancel(
-                context.provider_cancel_attempt(idempotency_key)
-            )
+            result = await provider.cancel(context.provider_cancel_attempt(idempotency_key))
         except Exception as exc:
             logger.warning(
                 "provider.cancel_failed",

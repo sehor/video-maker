@@ -51,6 +51,7 @@ class Settings(BaseSettings):
         "development-only-provider-callback-claim-secret"
     )
     provider_claim_ttl_seconds: Annotated[int, Field(gt=0, le=900)] = 300
+    provider_artifact_retention_seconds: Annotated[int, Field(ge=0)] = 86400
     provider_webhook_max_bytes: Annotated[int, Field(gt=0, le=1_048_576)] = 65_536
     admin_auth_subjects: Annotated[list[str], NoDecode] = []
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]

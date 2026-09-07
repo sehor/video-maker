@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.artifacts import ArtifactReceiptError, RemoteArtifactReceiver
+from app.errors import ApiError
 from app.media import MediaPolicy
 from app.models import (
     AttemptStatus,
@@ -109,6 +110,19 @@ class ProviderCompletionService:
     ) -> ProviderResultAction:
         """Single idempotent completion path for polling, webhooks, and cancellation."""
 
+        if result.output is not None and result.output.object_key is not None:
+            try:
+                self._record_artifact(
+                    context.job_id, context.attempt_id, result.output.object_key, "SOURCE"
+                )
+            except (ValueError, ApiError):
+                self._fail_attempt(
+                    context,
+                    ProviderFailure(
+                        FailureCode.OUTPUT_CORRUPTED, "Provider 输出对象不在受控命名空间"
+                    ),
+                )
+                return ProviderResultAction.COMPLETE
         source_failure = self._cost_source_failure(context, result)
         if source_failure is not None:
             self._fail_attempt(context, source_failure)
@@ -251,9 +265,7 @@ class ProviderCompletionService:
         retryable = is_retryable_failure(failure.code)
         with self._session_factory() as db:
             job = db.scalar(
-                select(GenerationJob)
-                .where(GenerationJob.id == context.job_id)
-                .with_for_update()
+                select(GenerationJob).where(GenerationJob.id == context.job_id).with_for_update()
             )
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
@@ -477,10 +489,11 @@ class ProviderCompletionService:
             )
             return
         claim = self._storage.write_claim(
-            "outputs",
+            f"outputs/{context.job_id}/{context.attempt_id}",
             mime_type=output.media_type,
             max_bytes=max(1, len(output.content)),
         )
+        self._record_artifact(context.job_id, context.attempt_id, claim.object_key, "FINAL")
         stored = self._storage.put(claim, output.content, output.media_type)
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
@@ -589,9 +602,7 @@ class ProviderCompletionService:
     def _finish_cancelled(self, context: AttemptContext, result: PollResult) -> None:
         with self._session_factory() as db:
             job = db.scalar(
-                select(GenerationJob)
-                .where(GenerationJob.id == context.job_id)
-                .with_for_update()
+                select(GenerationJob).where(GenerationJob.id == context.job_id).with_for_update()
             )
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:

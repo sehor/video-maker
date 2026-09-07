@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,12 +35,14 @@ class RemoteArtifactReceiver:
         media_validator: MediaValidator,
         *,
         max_bytes: int,
+        register_write: Callable[[uuid.UUID, uuid.UUID, str], None] | None = None,
     ) -> None:
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         self._storage = storage
         self._media_validator = media_validator
         self._max_bytes = max_bytes
+        self._register_write = register_write
 
     def receive_and_publish(
         self,
@@ -86,6 +89,8 @@ class RemoteArtifactReceiver:
                     mime_type="video/mp4",
                     max_bytes=self._max_bytes,
                 )
+                if self._register_write is not None:
+                    self._register_write(job_id, attempt_id, claim.object_key)
                 with candidate.open("rb") as source:
                     stored = self._storage.put(claim, source, "video/mp4")
         except ArtifactReceiptError:

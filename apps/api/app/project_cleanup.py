@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import structlog
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.artifact_lifecycle import cleanup_due
 from app.dead_letters import add_dead_letter
 from app.errors import ApiError
 from app.models import (
@@ -19,6 +20,7 @@ from app.models import (
     ProjectAsset,
     ProjectAssetStatus,
     ProjectStatus,
+    ProviderArtifact,
     StorageCleanupEvent,
     StorageCleanupObject,
     StorageCleanupObjectKind,
@@ -83,6 +85,14 @@ def request_project_deletion(
         cleanup_objects.setdefault(object_key, StorageCleanupObjectKind.OUTPUT)
 
     now = clock()
+    retained = {}
+    for artifact, job in db.execute(
+        select(ProviderArtifact, GenerationJob)
+        .join(GenerationJob, GenerationJob.id == ProviderArtifact.job_id)
+        .where(ProviderArtifact.project_id == project.id)
+    ):
+        cleanup_objects.setdefault(artifact.object_key, StorageCleanupObjectKind.PROVIDER)
+        retained[artifact.object_key] = cleanup_due(artifact, job)
     project.status = ProjectStatus.DELETED
     project.deleted_at = now
     event = StorageCleanupEvent(
@@ -99,6 +109,7 @@ def request_project_deletion(
             object_key=object_key,
             object_kind=object_kind,
             status=StorageCleanupObjectStatus.PENDING,
+            not_before=max(now, retained.get(object_key, now)),
         )
         for object_key, object_kind in sorted(cleanup_objects.items())
     )
@@ -162,8 +173,7 @@ class StorageCleanupDispatcher:
             self.after_delete(event, request)
             self._mark_object_deleted(event, request)
 
-        self._mark_published(event)
-        return DispatchResult.PUBLISHED
+        return self._mark_published(event)
 
     def after_claim(self, event: ClaimedStorageCleanupEvent) -> None:
         """Failure-injection seam for a crash after claiming the cleanup event."""
@@ -247,6 +257,7 @@ class StorageCleanupDispatcher:
                 .where(
                     StorageCleanupObject.event_id == event.event_id,
                     StorageCleanupObject.status == StorageCleanupObjectStatus.PENDING,
+                    StorageCleanupObject.not_before <= self.clock(),
                 )
                 .order_by(StorageCleanupObject.object_key, StorageCleanupObject.id)
                 .limit(1)
@@ -354,11 +365,23 @@ class StorageCleanupDispatcher:
                     )
                     .values(status=ProjectAssetStatus.DELETED)
                 )
+            db.execute(
+                update(ProviderArtifact)
+                .where(
+                    ProviderArtifact.project_id == event.project_id,
+                    ProviderArtifact.object_key == request.object_key,
+                )
+                .values(
+                    status=OutboxStatus.PUBLISHED,
+                    cleaned_at=now,
+                    locked_at=None,
+                    lock_token=None,
+                    last_error=None,
+                )
+            )
             db.commit()
 
-    def _schedule_retry(
-        self, event: ClaimedStorageCleanupEvent, exc: Exception
-    ) -> DispatchResult:
+    def _schedule_retry(self, event: ClaimedStorageCleanupEvent, exc: Exception) -> DispatchResult:
         now = self.clock()
         error = f"{type(exc).__name__}: {exc}"[:2000]
         with self.session_factory() as db:
@@ -411,13 +434,41 @@ class StorageCleanupDispatcher:
         )
         return result
 
-    def _mark_published(self, event: ClaimedStorageCleanupEvent) -> None:
+    def _mark_published(self, event: ClaimedStorageCleanupEvent) -> DispatchResult:
         now = self.clock()
         pending_objects = exists().where(
             StorageCleanupObject.event_id == event.event_id,
             StorageCleanupObject.status == StorageCleanupObjectStatus.PENDING,
         )
         with self.session_factory() as db:
+            next_due = db.scalar(
+                select(func.min(StorageCleanupObject.not_before)).where(
+                    StorageCleanupObject.event_id == event.event_id,
+                    StorageCleanupObject.status == StorageCleanupObjectStatus.PENDING,
+                )
+            )
+            if next_due is not None:
+                deferred = db.execute(
+                    update(StorageCleanupEvent)
+                    .where(
+                        StorageCleanupEvent.id == event.event_id,
+                        StorageCleanupEvent.lock_token == event.lock_token,
+                        StorageCleanupEvent.status == OutboxStatus.PROCESSING,
+                    )
+                    .values(
+                        status=OutboxStatus.PENDING,
+                        next_attempt_at=next_due,
+                        locked_at=None,
+                        lock_token=None,
+                        attempt_count=StorageCleanupEvent.attempt_count - 1,
+                    )
+                )
+                if deferred.rowcount != 1:
+                    raise RuntimeError(
+                        "storage cleanup lease lost while deferring retained objects"
+                    )
+                db.commit()
+                return DispatchResult.RETRY_SCHEDULED
             published = db.execute(
                 update(StorageCleanupEvent)
                 .where(
@@ -443,3 +494,4 @@ class StorageCleanupDispatcher:
             event_id=str(event.event_id),
             project_id=str(event.project_id),
         )
+        return DispatchResult.PUBLISHED
