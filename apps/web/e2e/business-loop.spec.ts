@@ -17,9 +17,25 @@ test('register, create project, create shot and run mock generation', async ({ p
   await page.getByRole('button', { name: '创建镜头' }).click()
   await page.getByRole('button', { name: '领取 10 秒测试额度' }).click()
   await expect(page.getByText('FAST 可用：10 秒')).toBeVisible()
+  const acceptedJobs: string[] = []
+  const keys: string[] = []
+  await page.route('**/v1/generations', async (route) => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(202)
+    acceptedJobs.push((await response.json()).id)
+    keys.push(route.request().headers()['idempotency-key']!)
+    if (acceptedJobs.length === 1) await route.abort('failed')
+    else await route.fulfill({ response })
+  })
   await page.getByRole('button', { name: '开始生成' }).click()
+  await expect(page.getByRole('button', { name: '恢复原请求' })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: '恢复原请求' }).click()
   await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page.locator('video')).toBeVisible()
+  expect(acceptedJobs).toHaveLength(2)
+  expect(new Set(acceptedJobs).size).toBe(1)
+  expect(new Set(keys).size).toBe(1)
   await expect.poll(() => page.locator('video').evaluate((video: HTMLVideoElement) => ({
     ready: video.readyState >= 2, width: video.videoWidth, height: video.videoHeight,
     error: video.error?.code ?? null

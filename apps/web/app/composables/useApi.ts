@@ -15,7 +15,8 @@ export const useApi = () => {
     const response = await fetch(`${config.public.apiBase}${path}`, { ...options, headers })
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as ApiError
-      throw new Error(body.error?.message || `请求失败 (${response.status})`)
+      throw new ApiRequestError(body.error?.message || `请求失败 (${response.status})`, response.status,
+        body.error?.code, body.error?.request_id)
     }
     if (response.status === 204) return undefined as T
     return response.json() as Promise<T>
@@ -32,3 +33,4 @@ export const useApi = () => {
 
   return { request, download }
 }
+import { ApiRequestError } from '~/utils/api-error'
