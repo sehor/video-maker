@@ -1,9 +1,12 @@
 import hashlib
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from threading import Barrier
 from typing import BinaryIO
 
 import pytest
@@ -114,6 +117,139 @@ def test_local_and_remote_follow_put_open_stat_delete_contract(
     store.delete(stored.key)
     store.delete(stored.key)
     assert_error_code("STORAGE_OBJECT_NOT_FOUND", lambda: store.stat(stored.key))
+
+
+def assert_object_content(store: ObjectStorage, key: str, expected: bytes) -> None:
+    assert store.stat(key).size_bytes == len(expected)
+    with store.open(store.read_claim(key)) as source:
+        assert source.read() == expected
+
+
+def test_duplicate_write_preserves_committed_object(storage_factory: StorageFactory) -> None:
+    store = storage_factory(MutableClock())
+    claim = store.write_claim("assets", mime_type="image/png", max_bytes=100)
+    store.put(claim, PNG, "image/png")
+
+    for replacement in (b"different content", PNG):
+        with pytest.raises(ApiError) as raised:
+            store.put(claim, replacement, "image/png")
+        assert (raised.value.status_code, raised.value.code) == (409, "STORAGE_OBJECT_EXISTS")
+        assert_object_content(store, claim.object_key, PNG)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_stream_read_failure_preserves_storage(
+    storage_factory: StorageFactory,
+    existing: bool,
+) -> None:
+    store = storage_factory(MutableClock())
+    claim = store.write_claim("assets", mime_type="image/png", max_bytes=100)
+    if existing:
+        store.put(claim, PNG, "image/png")
+
+    class FailingStream(BytesIO):
+        def read(self, size=-1):
+            if self.tell():
+                raise OSError("injected stream read failure")
+            return super().read(4)
+
+    with pytest.raises(OSError, match="injected stream read failure"):
+        store.put(claim, FailingStream(PNG), "image/png")
+
+    if existing:
+        assert_object_content(store, claim.object_key, PNG)
+    else:
+        assert_error_code("STORAGE_OBJECT_NOT_FOUND", lambda: store.stat(claim.object_key))
+
+
+def test_local_concurrent_writers_preserve_winner(tmp_path: Path, monkeypatch) -> None:
+    stores = [LocalObjectStorage(tmp_path / "objects", CLAIM_SECRET) for _ in range(2)]
+    claim = stores[0].write_claim("assets", mime_type="image/png", max_bytes=100)
+    (stores[0].root / "assets").mkdir()
+    original_open = Path.open
+    barrier = Barrier(2)
+
+    def concurrent_open(path, mode="r", *args, **kwargs):
+        if mode == "xb":
+            barrier.wait(timeout=10)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", concurrent_open)
+    contents = [PNG, PNG + b"second writer"]
+
+    def write(index):
+        try:
+            stores[index].put(claim, contents[index], "image/png")
+        except Exception as exc:
+            return exc
+        return index
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(write, range(2)))
+    winners = [index for index in results if isinstance(index, int)]
+    assert len(winners) == 1, results
+    failures = [result for result in results if isinstance(result, Exception)]
+    assert len(failures) == 1 and isinstance(failures[0], ApiError), results
+    assert (failures[0].status_code, failures[0].code) == (409, "STORAGE_OBJECT_EXISTS")
+    assert_object_content(stores[0], claim.object_key, contents[winners[0]])
+
+
+def test_local_open_failure_preserves_committed_object(tmp_path: Path, monkeypatch) -> None:
+    store = LocalObjectStorage(tmp_path / "objects", CLAIM_SECRET)
+    claim = store.write_claim("assets", mime_type="image/png", max_bytes=100)
+    store.put(claim, PNG, "image/png")
+    original_open = Path.open
+
+    def denied_open(path, mode="r", *args, **kwargs):
+        if mode == "xb":
+            raise PermissionError("injected access denial")
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied_open)
+    with pytest.raises(PermissionError, match="injected access denial"):
+        store.put(claim, PNG + b"replacement", "image/png")
+    assert_object_content(store, claim.object_key, PNG)
+
+
+@pytest.mark.parametrize("failure", ["create", "write", "close"])
+def test_local_disk_failure_cleans_only_new_object(
+    tmp_path: Path, monkeypatch, failure: str
+) -> None:
+    store = LocalObjectStorage(tmp_path / "objects", CLAIM_SECRET)
+    committed = put_png(store)
+    claim = store.write_claim("assets", mime_type="image/png", max_bytes=100)
+    original_open = Path.open
+
+    @contextmanager
+    def failing_target(path, *args, **kwargs):
+        if failure == "create":
+            raise OSError("injected disk failure")
+        with original_open(path, "xb", *args, **kwargs) as target:
+            if failure == "write":
+
+                class FailingWriter:
+                    def write(self, content):
+                        target.write(content[:4])
+                        target.flush()
+                        raise OSError("injected disk failure")
+
+                yield FailingWriter()
+            else:
+                yield target
+        if failure == "close":
+            raise OSError("injected disk failure")
+
+    def failing_open(path, mode="r", *args, **kwargs):
+        if mode == "xb":
+            return failing_target(path, *args, **kwargs)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", failing_open)
+    with pytest.raises(OSError, match="injected disk failure"):
+        store.put(claim, PNG, "image/png")
+    assert_error_code("STORAGE_OBJECT_NOT_FOUND", lambda: store.stat(claim.object_key))
+    assert_object_content(store, committed.key, PNG)
+    assert list((tmp_path / "objects").rglob("*.png")) == [store.root / committed.key]
 
 
 def test_claims_are_bound_to_operation_object_and_limits(

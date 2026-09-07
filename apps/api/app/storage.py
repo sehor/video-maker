@@ -348,11 +348,15 @@ class LocalObjectStorage(ClaimingObjectStorage):
     def _put_bytes(self, key: str, content: bytes, mime_type: str) -> None:
         path = self._path_for(key)
         path.parent.mkdir(parents=True, exist_ok=True)
+        created = False
         try:
             with path.open("xb") as target:
+                created = True
                 target.write(content)
         except Exception:
-            path.unlink(missing_ok=True)
+            # A failed exclusive open does not own the existing object's cleanup.
+            if created:
+                path.unlink(missing_ok=True)
             raise
 
     def _open_object(self, key: str) -> BinaryIO:
