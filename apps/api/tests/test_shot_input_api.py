@@ -25,6 +25,19 @@ def test_asset_listing_and_atomic_binding(client):
     foreign, _, foreign_asset = _quoted_shot(client, with_reference=True)
     assert foreign["project_id"] != shot["project_id"]
     assert client.put(binding, json={"asset_id": foreign_asset["id"]}).status_code == 404
+    video = client.post(
+        path, files={"file": ("video.mp4", b"\x00\x00\x00\x18ftypisom", "video/mp4")}
+    )
+    assert video.status_code == 201
+    rejected = client.put(binding, json={"asset_id": video.json()["id"]})
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "REFERENCE_TYPE_INVALID"
+    assert (
+        client.put(
+            binding, json={"asset_id": second["id"]}, headers={"x-test-user": "other"}
+        ).status_code
+        == 404
+    )
     assert client.get(f"/v1/shots/{shot['id']}").json()["references"][0]["asset_id"] == second["id"]
     assert client.put(binding, json={"asset_id": None}).json()["references"] == []
 

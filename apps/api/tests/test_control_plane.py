@@ -133,12 +133,19 @@ def test_reconciler_releases_stale_provider_lease_once() -> None:
 
 
 def test_readiness_distinguishes_dependencies_and_migration_head(migration_database) -> None:
+    from alembic.script import ScriptDirectory
+    from tests.test_migrations import alembic_config
+
     _, engine = migration_database
     factory = sessionmaker(bind=engine)
+    expected = ReadinessService(factory, lambda: True, lambda: True).expected_revision
+    assert expected == ScriptDirectory.from_config(
+        alembic_config(engine.url.render_as_string(hide_password=False))
+    ).get_current_head()
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(64))"))
         connection.execute(
-            text("INSERT INTO alembic_version VALUES ('0012_optional_media_hashes')")
+            text("INSERT INTO alembic_version VALUES (:revision)"), {"revision": expected}
         )
 
     ready = ReadinessService(factory, lambda: True, lambda: True).check()
@@ -152,6 +159,11 @@ def test_readiness_distinguishes_dependencies_and_migration_head(migration_datab
     }
     assert not unavailable.ready
     assert unavailable.checks["storage"] is False
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE alembic_version SET version_num='0012_optional_media_hashes'")
+        )
+    assert not ReadinessService(factory, lambda: True, lambda: True).check().checks["migrations"]
 
 
 def test_health_is_live_when_readiness_fails(raw_client: TestClient, monkeypatch) -> None:

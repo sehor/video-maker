@@ -215,7 +215,7 @@ class ReadinessService:
         storage_check: Callable[[], bool],
         workflow_check: Callable[[], bool],
         *,
-        expected_revision: str = "0012_optional_media_hashes",
+        expected_revision: str = "0015_provider_artifacts",
     ) -> None:
         self.session_factory = session_factory
         self.storage_check = storage_check

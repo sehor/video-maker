@@ -79,6 +79,10 @@ def clean_database(database_engine):
     # Retain real commits and separate connections so races/locks are tested honestly.
     # DDL/migrations run once, data alone is reset between tests.
     with database_engine.begin() as connection:
+        # TRUNCATE recreates many files on Windows. Allow bounded disk sync time
+        # only for fixture cleanup, while retaining a short lock-wait limit.
+        connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+        connection.execute(text("SET LOCAL statement_timeout = '120s'"))
         tables = connection.scalars(text(
             "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() "
             "AND tablename NOT IN ('alembic_version', 'generation_route_versions')"

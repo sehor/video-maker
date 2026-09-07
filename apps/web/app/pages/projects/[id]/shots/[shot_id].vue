@@ -98,6 +98,7 @@ onMounted(async () => {
 </script>
 
 <template>
+  <div>
   <UAlert v-if="error && !shot" color="error" :description="error" />
   <div v-if="shot">
     <div class="page-head">
@@ -134,5 +135,6 @@ onMounted(async () => {
         <UButton v-if="operation && ['complete', 'failed'].includes(operation.phase)" :loading="busy" @click="generate(true)">重新生成</UButton>
       </section>
     </div>
+  </div>
   </div>
 </template>

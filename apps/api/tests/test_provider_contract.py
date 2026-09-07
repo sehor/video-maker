@@ -18,6 +18,8 @@ from app.provider import (
     ProviderFailure,
     ProviderStatus,
     ProviderSubmissionError,
+    SubmitDisposition,
+    SubmitResult,
     is_retryable_failure,
 )
 from app.provider_execution import AttemptBudget, GenerationExecutionService
@@ -93,6 +95,10 @@ def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClie
             super().__init__()
             self.poll_calls = 0
 
+        async def submit(self, request):
+            await super().submit(request)
+            return SubmitResult(disposition=SubmitDisposition.UNKNOWN)
+
         async def poll(self, attempt):
             self.poll_calls += 1
             if self.poll_calls == 1:
@@ -104,8 +110,7 @@ def test_submit_unknown_reconciles_without_duplicate_submit(raw_client: TestClie
     with SessionLocal() as db:
         job = db.get(GenerationJob, job_id)
         assert job is not None
-        job.mock_mode = "submit_unknown"
-        db.commit()
+        assert job.mock_mode == job.input_snapshot_json["mode"] == "success"
     provider = PendingOnceProvider()
     settings = get_settings()
     executor = GenerationExecutionService(

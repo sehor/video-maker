@@ -43,6 +43,7 @@ onBeforeUnmount(() => { disposed = true; poller.stop(); resource.dispose(); canc
 </script>
 
 <template>
+  <div>
   <div v-if="error" class="mb-4">
     <UAlert color="error" :description="error" />
     <UButton @click="poller.start()">重试查询</UButton>
@@ -68,5 +69,6 @@ onBeforeUnmount(() => { disposed = true; poller.stop(); resource.dispose(); canc
         <p v-else class="muted">正在生成视频…</p>
       </section>
     </div>
+  </div>
   </div>
 </template>

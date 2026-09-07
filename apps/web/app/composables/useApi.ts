@@ -1,3 +1,5 @@
+import { ApiRequestError } from '~/utils/api-error'
+
 type ApiError = { error?: { code?: string; message?: string; request_id?: string } }
 
 export const useApi = () => {
@@ -35,4 +37,3 @@ export const useApi = () => {
 
   return { request, download }
 }
-import { ApiRequestError } from '~/utils/api-error'
