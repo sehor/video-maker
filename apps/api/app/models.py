@@ -197,6 +197,13 @@ class Project(Base, TimestampMixin):
         nullable=False,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    route_binding_status: Mapped[str] = mapped_column(String(16), server_default="UNBOUND")
+    route_candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("generation_route_versions.candidate_id", ondelete="RESTRICT")
+    )
+    route_binding_source: Mapped[str | None] = mapped_column(String(32))
+    route_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    route_history_json: Mapped[dict[str, Any]] = mapped_column(JSON, server_default="{}")
 
     shots: Mapped[list["Shot"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
@@ -204,6 +211,21 @@ class Project(Base, TimestampMixin):
     assets: Mapped[list["ProjectAsset"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+
+class GenerationRouteVersion(Base):
+    __tablename__ = "generation_route_versions"
+    candidate_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True)
+    definition_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class RouteAdmission(Base):
+    __tablename__ = "route_admission"
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("generation_route_versions.candidate_id"), primary_key=True
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
 
 
 class StorageCleanupEvent(Base, TimestampMixin):

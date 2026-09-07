@@ -81,11 +81,15 @@ def clean_database(database_engine):
     with database_engine.begin() as connection:
         tables = connection.scalars(text(
             "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() "
-            "AND tablename != 'alembic_version'"
+            "AND tablename NOT IN ('alembic_version', 'generation_route_versions')"
         )).all()
         if tables:
             names = ", ".join(f'"{name}"' for name in tables)
             connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+            connection.execute(text(
+                "INSERT INTO route_admission (candidate_id) "
+                "SELECT candidate_id FROM generation_route_versions"
+            ))
     yield
 
 
