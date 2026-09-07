@@ -163,6 +163,13 @@ class RouteRegistry:
                 raise RouteDisabledError(f"route is disabled: {route_key}")
             return self._routes[route_key]
 
+    def enabled_route(self, route_key: str) -> RouteVersion:
+        with self._lock:
+            route = self.get(route_key)
+            if not self._enabled[route_key]:
+                raise RouteDisabledError(f"route is disabled: {route_key}")
+            return route
+
     def by_candidate_id(self, candidate_id: uuid.UUID) -> RouteVersion:
         for route in self._routes.values():
             if route.candidate_id == candidate_id:

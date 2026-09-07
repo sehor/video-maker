@@ -60,6 +60,7 @@ from app.project_cleanup import (
     StorageCleanupDispatcher,
     request_project_deletion,
 )
+from app.project_routing import project_route
 from app.provider_cancel_outbox import (
     ProviderCancelDispatcher,
     ProviderCancelRequest,
@@ -161,7 +162,7 @@ def route_for_shot(
     duration_ms: int,
     route: RouteVersion | None = None,
 ) -> RouteVersion:
-    selected = route or active_generation_route()
+    selected = route or project_route(db, shot.project_id)
     has_input = bool(selected_references(db, shot))
     try:
         selected.require_supported(
@@ -762,8 +763,6 @@ def create_batch(
     replay_id = replay_result_id(decision, "generation_batch")
     if replay_id is not None:
         return load_batch(db, replay_id, user.id)
-    route = active_generation_route()
-
     batch = GenerationBatch(
         id=uuid.uuid4(),
         user_id=user.id,
@@ -775,6 +774,7 @@ def create_batch(
         batch,
         [item.quote_id for item in payload.items],
     )
+    route = project_route(db, batch.project_id)
     for index, (_item, (quote, shot, snapshot)) in enumerate(
         zip(payload.items, claimed, strict=True)
     ):

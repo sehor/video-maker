@@ -18,6 +18,7 @@
 
 BL-04A 增加 `0014_project_route_binding`：持久化路线版本、独立接单开关和 Project 的
 暂定/固化/待核查状态。历史混合路线不自动归一，也不改变已接受 Job/Attempt。
+BL-04B 已将单任务、Batch 和首次成功接入绑定服务；数据库停单与接单通过行锁串行。
 
 BL-02A/B（2026-09-07）新增兼容迁移 `0013_job_input_snapshot`，并接入单任务、Batch 与
 Provider 执行的不可变输入快照。强制快照的切换未在开发库启用。

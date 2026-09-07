@@ -445,7 +445,6 @@ def reserve_quotes_for_batch(
             select(Quote)
             .where(Quote.id.in_(quote_ids), Quote.user_id == user.id)
             .order_by(Quote.id)
-            .with_for_update()
         )
     )
     by_id = {quote.id: quote for quote in quotes}
@@ -465,6 +464,12 @@ def reserve_quotes_for_batch(
     )
     if project is None:
         raise not_found("project")
+
+    # Match single-job lock order: Project, then Quote, then wallet accounts.
+    quotes = list(db.scalars(select(Quote).where(Quote.id.in_(quote_ids), Quote.user_id == user.id)
+                            .order_by(Quote.id).with_for_update()
+                            .execution_options(populate_existing=True)))
+    by_id = {quote.id: quote for quote in quotes}
 
     now = utcnow()
     claimed: list[tuple[Quote, Shot, dict[str, object]]] = []
