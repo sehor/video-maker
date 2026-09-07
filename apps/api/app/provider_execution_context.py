@@ -4,14 +4,12 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.input_snapshot import JobInputSnapshot
 from app.models import (
     AttemptStatus,
     GenerationAttempt,
     GenerationJob,
     JobStatus,
-    ProjectAsset,
-    Shot,
-    ShotReference,
 )
 from app.provider import ProviderAttempt, provider_cancel_key
 
@@ -65,20 +63,11 @@ class AttemptContextService:
         job: GenerationJob,
         attempt: GenerationAttempt,
     ) -> AttemptContext | None:
-        shot = db.get(Shot, job.shot_id)
-        if shot is None:
+        if job.input_snapshot_json is None:
+            # Legacy jobs require draining/manual review, never guessed input.
             return None
-        reference_object_key = db.scalar(
-            select(ProjectAsset.object_key)
-            .join(
-                ShotReference,
-                (ShotReference.asset_id == ProjectAsset.id)
-                & (ShotReference.project_id == ProjectAsset.project_id),
-            )
-            .where(ShotReference.shot_id == shot.id)
-            .order_by(ShotReference.created_at, ShotReference.id)
-            .limit(1)
-        )
+        snapshot = JobInputSnapshot.model_validate(job.input_snapshot_json)
+        reference_object_key = snapshot.references[0].object_key if snapshot.references else None
         return AttemptContext(
             job_id=job.id,
             attempt_id=attempt.id,
@@ -87,12 +76,12 @@ class AttemptContextService:
             workflow_version=attempt.workflow_version,
             route_candidate_id=job.selected_route_candidate_id,
             reference_object_key=reference_object_key,
-            prompt=shot.prompt,
-            negative_prompt=None,
-            duration_ms=job.duration_ms,
-            aspect_ratio=job.aspect_ratio,
-            resolution=job.resolution,
-            mode=job.mock_mode,
+            prompt=snapshot.prompt,
+            negative_prompt=snapshot.negative_prompt,
+            duration_ms=snapshot.duration_ms,
+            aspect_ratio=snapshot.aspect_ratio,
+            resolution=snapshot.resolution,
+            mode=snapshot.mode,
             status=attempt.status,
         )
 

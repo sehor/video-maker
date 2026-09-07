@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from starlette.background import BackgroundTask
 
+from app.accepted_input import capture_input, selected_references
 from app.auth import CurrentUser
 from app.config import get_settings
 from app.db import SessionLocal, get_db
@@ -161,10 +162,7 @@ def route_for_shot(
     route: RouteVersion | None = None,
 ) -> RouteVersion:
     selected = route or active_generation_route()
-    has_input = (
-        db.scalar(select(ShotReference.id).where(ShotReference.shot_id == shot.id).limit(1))
-        is not None
-    )
+    has_input = bool(selected_references(db, shot))
     try:
         selected.require_supported(
             resolution=resolution,
@@ -256,6 +254,11 @@ def owned_shot(
     *,
     for_update: bool = False,
 ) -> Shot:
+    if for_update:
+        project_id = db.scalar(select(Shot.project_id).where(Shot.id == shot_id))
+        if project_id is None:
+            raise not_found("shot")
+        owned_project(db, project_id, owner_id, for_update=True)
     statement = (
         select(Shot)
         .join(Project)
@@ -266,8 +269,9 @@ def owned_shot(
         )
         .options(selectinload(Shot.references))
     )
-    if for_update:
-        statement = statement.with_for_update(of=Project)
+    # Read after acquiring the project lock, so a concurrent edit cannot leave
+    # stale Shot columns paired with new references after a lock wait.
+    statement = statement.execution_options(populate_existing=True)
     shot = db.scalar(statement)
     if shot is None:
         raise not_found("shot")
@@ -692,18 +696,7 @@ def generate(
     replay_id = replay_result_id(decision, "generation_job")
     if replay_id is not None:
         return load_job(db, replay_id, user.id)
-    shot = db.scalar(
-        select(Shot)
-        .join(Project)
-        .where(
-            Shot.id == payload.shot_id,
-            Project.owner_id == user.id,
-            Project.status == ProjectStatus.ACTIVE,
-        )
-        .with_for_update(of=Project)
-    )
-    if shot is None:
-        raise not_found("shot")
+    shot = owned_shot(db, payload.shot_id, user.id, for_update=True)
     route = route_for_shot(
         db,
         shot,
@@ -724,6 +717,7 @@ def generate(
         mock_mode=generation_options.mode_for(0),
         selected_route_candidate_id=route.candidate_id,
     )
+    job.input_snapshot_json = capture_input(db, shot, job)
     db.add(job)
     db.flush()
     reserve_quote_for_job(db, user, shot, payload.quote_id, job)
@@ -811,6 +805,7 @@ def create_batch(
             mock_mode=generation_options.mode_for(index),
             selected_route_candidate_id=route.candidate_id,
         )
+        job.input_snapshot_json = capture_input(db, shot, job)
         db.add(job)
         db.flush()
         if not transition_job(
