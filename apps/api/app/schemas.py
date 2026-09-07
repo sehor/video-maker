@@ -72,6 +72,16 @@ class ShotReferenceCreate(BaseModel):
     reference_role: str = Field(min_length=1, max_length=32, pattern=r"^[A-Z][A-Z0-9_]*$")
 
 
+class ShotInputUpdate(BaseModel):
+    asset_id: uuid.UUID | None
+
+
+class GenerationOptionsOut(BaseModel):
+    requires_reference_image: bool
+    duration_seconds: list[int]
+    resolutions: list[str]
+
+
 class ShotReferenceOut(OrmModel):
     id: uuid.UUID
     asset_id: uuid.UUID
@@ -105,6 +115,11 @@ class ProjectAssetOut(OrmModel):
     sha256: str | None
     status: ProjectAssetStatus
     created_at: datetime
+
+
+class ProjectAssetList(BaseModel):
+    items: list[ProjectAssetOut]
+    next_cursor: str | None = None
 
 
 class QualityTierOut(OrmModel):

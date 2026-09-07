@@ -114,7 +114,8 @@ def e2e(env: dict[str, str], runtime: Path, extra: list[str]) -> None:
                "CORS_ORIGINS": web_base, "NUXT_PUBLIC_API_BASE": api_base,
                "NUXT_PUBLIC_AUTH_BASE_URL": web_base, "E2E_BASE_URL": web_base,
                "E2E_MANAGED": "1", "NITRO_HOST": "127.0.0.1", "NITRO_PORT": str(web_port),
-               "OUTBOX_DISPATCHER_ENABLED": "true", "PYTHONPATH": str(API)}
+               "OUTBOX_DISPATCHER_ENABLED": "true", "PYTHONPATH": str(API),
+               "GENERATION_ROUTE_VERSION": "runpod_simulated_v1", "RUNPOD_SIMULATOR_ENABLED": "true"}
         # Migrations use the same isolated URL as both servers.
         sys.path.insert(0, str(API))
         migrate(url)

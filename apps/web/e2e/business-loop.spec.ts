@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('register, create project, create shot and run mock generation', async ({ page }) => {
+test('register, bind an image and recover simulated I2V generation', async ({ page }) => {
   const email = `e2e-${Date.now()}@example.test`
   await page.goto('/login')
   await page.getByRole('button', { name: '没有账号？创建一个' }).click()
@@ -12,9 +12,18 @@ test('register, create project, create shot and run mock generation', async ({ p
   await page.getByRole('button', { name: '新建项目' }).click()
   await page.getByLabel('项目名称').fill('E2E 项目')
   await page.getByRole('button', { name: '创建项目' }).click()
+  await page.getByLabel('上传参考素材').setInputFiles({ name: 'reference.png', mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5Z8AAAAASUVORK5CYII=', 'base64') })
+  await expect(page.getByText('reference.png', { exact: true })).toBeVisible()
   await page.getByLabel('镜头名称').fill('E2E 镜头')
   await page.getByLabel('提示词').fill('电影感的雨夜城市街道')
   await page.getByRole('button', { name: '创建镜头' }).click()
+  await expect(page.getByRole('button', { name: '开始生成' })).toBeDisabled()
+  await page.getByLabel('首帧参考图（必选）').selectOption({ label: 'reference.png' })
+  await page.getByRole('button', { name: '保存参考图' }).click()
+  await expect(page.getByText('当前参考图：reference.png')).toBeVisible()
+  await page.reload()
+  await expect(page.getByText('当前参考图：reference.png')).toBeVisible()
   await page.getByRole('button', { name: '领取 10 秒测试额度' }).click()
   await expect(page.getByText('FAST 可用：10 秒')).toBeVisible()
   const acceptedJobs: string[] = []

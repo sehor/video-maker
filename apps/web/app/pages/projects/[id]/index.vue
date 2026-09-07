@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { Asset, Project, Shot } from '~/types/domain'
+import { loadProjectAssets } from '~/utils/assets'
 
 const route = useRoute()
 const api = useApi()
 const project = ref<Project | null>(null)
 const shots = ref<Shot[]>([])
 const asset = ref<Asset | null>(null)
+const assets = ref<Asset[]>([])
+const uploading = ref(false)
 const error = ref('')
 const form = reactive({ title: '', prompt: '', duration_seconds: 5, aspect_ratio: '16:9' as '16:9' | '9:16' })
 
 const load = async () => {
   project.value = await api.request<Project>(`/v1/projects/${route.params.id}`)
   shots.value = (await api.request<{ items: Shot[] }>(`/v1/projects/${route.params.id}/shots`)).items
+  assets.value = await loadProjectAssets(api.request, String(route.params.id))
 }
 const createShot = async () => {
   const shot = await api.request<Shot>(`/v1/projects/${route.params.id}/shots`, { method: 'POST', body: JSON.stringify(form) })
@@ -22,11 +26,14 @@ const upload = async (event: Event) => {
   if (!file) return
   const body = new FormData()
   body.append('file', file)
+  uploading.value = true
+  error.value = ''
   try {
     asset.value = await api.request<Asset>(`/v1/projects/${route.params.id}/assets`, { method: 'POST', body })
-  } catch (e) { error.value = (e as Error).message }
+    assets.value = await loadProjectAssets(api.request, String(route.params.id))
+  } catch (e) { error.value = (e as Error).message } finally { uploading.value = false }
 }
-onMounted(load)
+onMounted(() => load().catch(e => { error.value = (e as Error).message }))
 </script>
 
 <template>
@@ -49,8 +56,10 @@ onMounted(load)
         <div class="panel">
           <h2>参考素材</h2>
           <p class="muted">JPEG、PNG、WebP 或 MP4，最大 50 MB。</p>
-          <input type="file" accept="image/jpeg,image/png,image/webp,video/mp4" @change="upload">
+          <input aria-label="上传参考素材" type="file" :disabled="uploading" accept="image/jpeg,image/png,image/webp,video/mp4" @change="upload">
           <p v-if="asset" class="muted">已上传：{{ asset.original_filename }}</p>
+          <ul v-if="assets.length" aria-label="已有素材"><li v-for="item in assets" :key="item.id">{{ item.original_filename }} · {{ item.media_type }}</li></ul>
+          <p v-else class="muted">暂无素材。上传后可在镜头页面选择首帧参考图。</p>
           <UAlert v-if="error" color="error" :description="error" />
         </div>
         <div class="panel">

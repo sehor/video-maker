@@ -82,8 +82,10 @@ from app.schemas import (
     GenerationCreate,
     GenerationJobList,
     GenerationJobOut,
+    GenerationOptionsOut,
     LedgerTransactionList,
     LedgerTransactionOut,
+    ProjectAssetList,
     ProjectAssetOut,
     ProjectCreate,
     ProjectList,
@@ -92,6 +94,7 @@ from app.schemas import (
     QuoteCreate,
     QuoteOut,
     ShotCreate,
+    ShotInputUpdate,
     ShotList,
     ShotOut,
     ShotReferenceCreate,
@@ -426,6 +429,97 @@ def create_shot_reference(
         raise ApiError(409, "SHOT_REFERENCE_EXISTS", "该镜头引用已存在") from exc
     db.refresh(reference)
     return reference
+
+
+@router.put("/shots/{shot_id}/input", response_model=ShotOut)
+def set_shot_input(shot_id: uuid.UUID, payload: ShotInputUpdate, user: CurrentUser, db: Db):
+    shot = owned_shot(db, shot_id, user.id, for_update=True)
+    if payload.asset_id is not None:
+        asset = db.scalar(
+            select(ProjectAsset).where(
+                ProjectAsset.id == payload.asset_id,
+                ProjectAsset.project_id == shot.project_id,
+                ProjectAsset.owner_id == user.id,
+                ProjectAsset.status == ProjectAssetStatus.READY,
+            )
+        )
+        if asset is None:
+            raise not_found("asset")
+        if not asset.media_type.startswith("image/"):
+            raise ApiError(422, "REFERENCE_TYPE_INVALID", "首帧参考素材必须是图片")
+    references = list(
+        db.scalars(
+            select(ShotReference).where(
+                ShotReference.shot_id == shot.id, ShotReference.reference_role == "FIRST_FRAME"
+            )
+        )
+    )
+    for reference in references:
+        db.delete(reference)
+    db.flush()
+    if payload.asset_id is not None:
+        db.add(
+            ShotReference(
+                project_id=shot.project_id,
+                shot_id=shot.id,
+                asset_id=payload.asset_id,
+                reference_role="FIRST_FRAME",
+            )
+        )
+    db.commit()
+    return owned_shot(db, shot.id, user.id)
+
+
+@router.get("/projects/{project_id}/generation-options", response_model=GenerationOptionsOut)
+def project_generation_options(project_id: uuid.UUID, user: CurrentUser, db: Db):
+    project = owned_project(db, project_id, user.id)
+    if project.route_binding_status == "REVIEW":
+        raise ApiError(409, "PROJECT_ROUTE_REVIEW_REQUIRED", "项目生成配置需要核查")
+    registry = get_route_registry()
+    route = (
+        registry.by_candidate_id(project.route_candidate_id)
+        if project.route_candidate_id is not None
+        else registry.get(registry.active_key)
+    )
+    return GenerationOptionsOut(
+        requires_reference_image=route.requires_input_claim,
+        duration_seconds=[duration // 1000 for duration in sorted(route.durations_ms)],
+        resolutions=sorted(route.resolutions),
+    )
+
+
+@router.get("/projects/{project_id}/assets", response_model=ProjectAssetList)
+def list_project_assets(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Db,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    cursor: str | None = None,
+):
+    owned_project(db, project_id, user.id)
+    statement = select(ProjectAsset).where(
+        ProjectAsset.project_id == project_id,
+        ProjectAsset.owner_id == user.id,
+        ProjectAsset.status == ProjectAssetStatus.READY,
+    )
+    parsed = parse_cursor(cursor)
+    if parsed is not None:
+        created, item_id = parsed
+        statement = statement.where(
+            or_(
+                ProjectAsset.created_at > created,
+                and_(ProjectAsset.created_at == created, ProjectAsset.id > item_id),
+            )
+        )
+    items = list(
+        db.scalars(statement.order_by(ProjectAsset.created_at, ProjectAsset.id).limit(limit + 1))
+    )
+    next_cursor = (
+        encode_cursor(items[limit - 1].created_at.isoformat(), items[limit - 1].id)
+        if len(items) > limit
+        else None
+    )
+    return ProjectAssetList(items=items[:limit], next_cursor=next_cursor)
 
 
 @router.delete("/shots/{shot_id}/references/{reference_id}", status_code=204)

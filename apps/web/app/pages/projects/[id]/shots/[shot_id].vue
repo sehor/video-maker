@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { Shot, Wallet } from '~/types/domain'
+import type { Asset, Shot, Wallet } from '~/types/domain'
+import { loadProjectAssets } from '~/utils/assets'
 import { GenerationOperationController } from '~/utils/generation-operation'
 import type { GenerationOperation } from '~/utils/generation-operation'
 
@@ -10,6 +11,22 @@ const busy = ref(false)
 const grantBusy = ref(false)
 const error = ref('')
 const wallet = ref<Wallet | null>(null)
+const assets = ref<Asset[]>([])
+const selectedAssetId = ref('')
+const bindingBusy = ref(false)
+const requiresImage = ref(false)
+const currentReference = computed(() => shot.value?.references?.find(item => item.reference_role === 'FIRST_FRAME'))
+const currentAssetName = computed(() => assets.value.find(item => item.id === currentReference.value?.asset_id)?.original_filename)
+const missingImage = computed(() => requiresImage.value && !currentReference.value)
+const saveReference = async () => {
+  bindingBusy.value = true
+  error.value = ''
+  try {
+    shot.value = await api.request<Shot>(`/v1/shots/${route.params.shot_id}/input`, {
+      method: 'PUT', body: JSON.stringify({ asset_id: selectedAssetId.value || null })
+    })
+  } catch (e) { error.value = (e as Error).message } finally { bindingBusy.value = false }
+}
 const { session } = useAuth()
 const operation = ref<GenerationOperation | null>(null)
 const controller = () => {
@@ -23,6 +40,10 @@ const controller = () => {
 }
 const generate = async (startNew = false) => {
   if (busy.value) return
+  if (missingImage.value && (!operation.value || startNew)) {
+    error.value = '请先选择并保存首帧参考图'
+    return
+  }
   busy.value = true
   error.value = ''
   try {
@@ -62,11 +83,16 @@ const grantTestSeconds = async () => {
 onMounted(async () => {
   try {
   operation.value = controller().read()
-  const [loadedShot] = await Promise.all([
+  const [loadedShot, , loadedAssets, options] = await Promise.all([
     api.request<Shot>(`/v1/shots/${route.params.shot_id}`),
-    loadWallet()
+    loadWallet(),
+    loadProjectAssets(api.request, String(route.params.id)),
+    api.request<{ requires_reference_image: boolean }>(`/v1/projects/${route.params.id}/generation-options`)
   ])
   shot.value = loadedShot
+  assets.value = loadedAssets
+  requiresImage.value = options.requires_reference_image
+  selectedAssetId.value = currentReference.value?.asset_id || ''
   } catch (e) { error.value = (e as Error).message }
 })
 </script>
@@ -83,6 +109,16 @@ onMounted(async () => {
         <h2>镜头参数</h2>
         <p>{{ shot.prompt }}</p>
         <div class="actions muted"><span>{{ shot.duration_seconds }} 秒</span><span>{{ shot.aspect_ratio }}</span></div>
+        <div class="form-stack">
+          <label for="reference-image">首帧参考图{{ requiresImage ? '（必选）' : '（可选）' }}</label>
+          <select id="reference-image" v-model="selectedAssetId" :disabled="bindingBusy || busy">
+            <option value="">不使用参考图</option>
+            <option v-for="item in assets.filter(item => item.media_type.startsWith('image/'))" :key="item.id" :value="item.id">{{ item.original_filename }}</option>
+          </select>
+          <UButton :loading="bindingBusy" :disabled="busy" @click="saveReference">保存参考图</UButton>
+          <p role="status">当前参考图：{{ currentAssetName || '未绑定' }}</p>
+          <p class="muted">更换或解绑只影响之后的新任务。新素材请在项目页上传。</p>
+        </div>
       </section>
       <section class="panel form-stack">
         <div><h2>提交生成任务</h2><p class="muted">按当前质量档生成视频。</p></div>
@@ -92,7 +128,8 @@ onMounted(async () => {
         </div>
         <UAlert v-if="error" color="error" :description="error" />
         <p v-if="operation && !['complete', 'failed'].includes(operation.phase)" role="status" class="muted">上次操作结果尚未确认，请恢复原请求。</p>
-        <UButton v-if="!operation || !['complete', 'failed'].includes(operation.phase)" :loading="busy" icon="i-lucide-play" @click="generate()">{{ operation ? '恢复原请求' : '开始生成' }}</UButton>
+        <p v-if="missingImage" class="muted">请先选择并保存首帧参考图。</p>
+        <UButton v-if="!operation || !['complete', 'failed'].includes(operation.phase)" :disabled="bindingBusy || (!operation && missingImage)" :loading="busy" icon="i-lucide-play" @click="generate()">{{ operation ? '恢复原请求' : '开始生成' }}</UButton>
         <NuxtLink v-if="operation?.jobId" :to="`/jobs/${operation.jobId}`"><UButton>查看上次任务</UButton></NuxtLink>
         <UButton v-if="operation && ['complete', 'failed'].includes(operation.phase)" :loading="busy" @click="generate(true)">重新生成</UButton>
       </section>

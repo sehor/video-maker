@@ -94,6 +94,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/shots/{shot_id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Shot Input */
+        put: operations["set_shot_input_v1_shots__shot_id__input_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/generation-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Project Generation Options */
+        get: operations["project_generation_options_v1_projects__project_id__generation_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Assets */
+        get: operations["list_project_assets_v1_projects__project_id__assets_get"];
+        put?: never;
+        /** Upload Project Asset */
+        post: operations["upload_project_asset_v1_projects__project_id__assets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/shots/{shot_id}/references/{reference_id}": {
         parameters: {
             query?: never;
@@ -122,23 +174,6 @@ export interface paths {
         put?: never;
         /** Upload Asset */
         post: operations["upload_asset_v1_uploads_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/projects/{project_id}/assets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Upload Project Asset */
-        post: operations["upload_project_asset_v1_projects__project_id__assets_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -503,6 +538,15 @@ export interface components {
              */
             updated_at: string;
         };
+        /** GenerationOptionsOut */
+        GenerationOptionsOut: {
+            /** Requires Reference Image */
+            requires_reference_image: boolean;
+            /** Duration Seconds */
+            duration_seconds: number[];
+            /** Resolutions */
+            resolutions: string[];
+        };
         /** GenerationOutputOut */
         GenerationOutputOut: {
             /**
@@ -604,6 +648,13 @@ export interface components {
          * @enum {string}
          */
         OutputValidationStatus: "PENDING" | "VALID" | "INVALID";
+        /** ProjectAssetList */
+        ProjectAssetList: {
+            /** Items */
+            items: components["schemas"]["ProjectAssetOut"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
         /** ProjectAssetOut */
         ProjectAssetOut: {
             /**
@@ -770,6 +821,11 @@ export interface components {
              * @enum {string}
              */
             aspect_ratio: "16:9" | "9:16";
+        };
+        /** ShotInputUpdate */
+        ShotInputUpdate: {
+            /** Asset Id */
+            asset_id: string | null;
         };
         /** ShotList */
         ShotList: {
@@ -1206,6 +1262,141 @@ export interface operations {
             };
         };
     };
+    set_shot_input_v1_shots__shot_id__input_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shot_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShotInputUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShotOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_generation_options_v1_projects__project_id__generation_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationOptionsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_assets_v1_projects__project_id__assets_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAssetList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_project_asset_v1_projects__project_id__assets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_project_asset_v1_projects__project_id__assets_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAssetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_shot_reference_v1_shots__shot_id__references__reference_id__delete: {
         parameters: {
             query?: never;
@@ -1246,41 +1437,6 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_upload_asset_v1_uploads_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProjectAssetOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    upload_project_asset_v1_projects__project_id__assets_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_project_asset_v1_projects__project_id__assets_post"];
             };
         };
         responses: {
