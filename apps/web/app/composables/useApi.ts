@@ -22,13 +22,15 @@ export const useApi = () => {
     return response.json() as Promise<T>
   }
 
-  const download = async (path: string) => {
+  const download = async (path: string, signal?: AbortSignal) => {
     const token = await accessToken()
     const response = await fetch(`${config.public.apiBase}${path}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` }, signal
     })
-    if (!response.ok) throw new Error('下载失败')
-    return URL.createObjectURL(await response.blob())
+    if (!response.ok) throw new ApiRequestError(`下载失败 (${response.status})`, response.status)
+    const blob = await response.blob()
+    signal?.throwIfAborted()
+    return URL.createObjectURL(blob)
   }
 
   return { request, download }

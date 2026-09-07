@@ -39,8 +39,23 @@ test('register, bind an image and recover simulated I2V generation', async ({ pa
   await page.getByRole('button', { name: '开始生成' }).click()
   await expect(page.getByRole('button', { name: '恢复原请求' })).toBeVisible()
   await page.reload()
+  let failedPoll = false
+  let failedDownload = false
+  await page.route('**/v1/generations/*', async (route) => {
+    if (route.request().method() === 'GET' && !failedPoll) {
+      failedPoll = true
+      await route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+    } else await route.continue()
+  })
+  await page.route('**/v1/outputs/*/content', async (route) => {
+    if (!failedDownload) { failedDownload = true; await route.abort('failed') }
+    else await route.continue()
+  })
   await page.getByRole('button', { name: '恢复原请求' }).click()
   await expect(page.getByText('SUCCEEDED', { exact: true })).toBeVisible({ timeout: 20_000 })
+  await page.getByRole('button', { name: '重试下载' }).click()
+  expect(failedPoll).toBe(true)
+  expect(failedDownload).toBe(true)
   await expect(page.locator('video')).toBeVisible()
   expect(acceptedJobs).toHaveLength(2)
   expect(new Set(acceptedJobs).size).toBe(1)
