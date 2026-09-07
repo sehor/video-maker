@@ -668,6 +668,7 @@ class GenerationJob(Base, TimestampMixin):
     variant_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     quote_id: Mapped[uuid.UUID | None] = mapped_column()
     quote_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    input_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, native_enum=False, length=24), default=JobStatus.CREATED, nullable=False
     )
