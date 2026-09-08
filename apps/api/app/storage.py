@@ -3,11 +3,13 @@ import binascii
 import hashlib
 import hmac
 import json
+import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
 
@@ -85,9 +87,13 @@ class ObjectStorage(Protocol):
 
 
 class RemoteObjectBackend(Protocol):
-    """Minimal private-object client surface required by the remote adapter."""
+    """Private object client; consume a seekable stream before returning.
 
-    def put(self, key: str, content: bytes, mime_type: str) -> None: ...
+    Writes must create exclusively and clean up only their own failed upload.
+    Never retain the stream: the adapter closes its staging file on return.
+    """
+
+    def put(self, key: str, content: BinaryIO, mime_type: str) -> None: ...
 
     def open(self, key: str) -> BinaryIO: ...
 
@@ -96,6 +102,22 @@ class RemoteObjectBackend(Protocol):
     def delete(self, key: str) -> None: ...
 
     def ready(self) -> bool: ...
+
+
+def copy_stream(source: BinaryIO, target: BinaryIO, *, max_bytes: int | None = None) -> int:
+    size = 0
+    while True:
+        requested = (
+            READ_CHUNK_BYTES if max_bytes is None else min(READ_CHUNK_BYTES, max_bytes - size + 1)
+        )
+        chunk = source.read(requested)
+        if not chunk:
+            return size
+        size += len(chunk)
+        if max_bytes is not None and size > max_bytes:
+            raise ApiError(413, "UPLOAD_TOO_LARGE", "上传文件超过大小限制")
+        if target.write(chunk) != len(chunk):
+            raise OSError("incomplete storage write")
 
 
 def _utc_now() -> datetime:
@@ -241,12 +263,17 @@ class ClaimingObjectStorage:
         max_bytes = payload.get("max_bytes")
         if claimed_mime_type != mime_type or not isinstance(max_bytes, int):
             raise ApiError(403, "STORAGE_CLAIM_FORBIDDEN", "存储写入声明与内容不匹配")
-        body = self._read_content(content, max_bytes)
-        try:
-            self._put_bytes(claim.object_key, body, mime_type)
-        except FileExistsError as exc:
-            raise ApiError(409, "STORAGE_OBJECT_EXISTS", "存储对象已存在") from exc
-        return StoredObject(claim.object_key, mime_type, len(body))
+        source = BytesIO(content) if isinstance(content, bytes) else content
+        # Validate the entire stream before touching the destination. A disk-backed
+        # staging file bounds memory and is closed on every read/write failure.
+        with tempfile.TemporaryFile(mode="w+b") as staged:
+            size = copy_stream(source, staged, max_bytes=max_bytes)
+            staged.seek(0)
+            try:
+                self._put_stream(claim.object_key, staged, mime_type)
+            except FileExistsError as exc:
+                raise ApiError(409, "STORAGE_OBJECT_EXISTS", "存储对象已存在") from exc
+        return StoredObject(claim.object_key, mime_type, size)
 
     def open(self, claim: StorageClaim) -> BinaryIO:
         self._claims.verify(claim, ClaimOperation.READ)
@@ -296,22 +323,7 @@ class ClaimingObjectStorage:
             max_bytes=max_bytes,
         )
 
-    @staticmethod
-    def _read_content(content: bytes | BinaryIO, max_bytes: int) -> bytes:
-        if isinstance(content, bytes):
-            if len(content) > max_bytes:
-                raise ApiError(413, "UPLOAD_TOO_LARGE", "上传文件超过大小限制")
-            return content
-        chunks: list[bytes] = []
-        size = 0
-        while chunk := content.read(READ_CHUNK_BYTES):
-            size += len(chunk)
-            if size > max_bytes:
-                raise ApiError(413, "UPLOAD_TOO_LARGE", "上传文件超过大小限制")
-            chunks.append(chunk)
-        return b"".join(chunks)
-
-    def _put_bytes(self, key: str, content: bytes, mime_type: str) -> None:
+    def _put_stream(self, key: str, content: BinaryIO, mime_type: str) -> None:
         raise NotImplementedError
 
     def _open_object(self, key: str) -> BinaryIO:
@@ -345,14 +357,14 @@ class LocalObjectStorage(ClaimingObjectStorage):
             raise ApiError(400, "STORAGE_KEY_INVALID", "无效的存储对象")
         return path
 
-    def _put_bytes(self, key: str, content: bytes, mime_type: str) -> None:
+    def _put_stream(self, key: str, content: BinaryIO, mime_type: str) -> None:
         path = self._path_for(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         created = False
         try:
             with path.open("xb") as target:
                 created = True
-                target.write(content)
+                copy_stream(content, target)
         except Exception:
             # A failed exclusive open does not own the existing object's cleanup.
             if created:
@@ -388,7 +400,7 @@ class RemoteObjectStorage(ClaimingObjectStorage):
     def ready(self) -> bool:
         return self._backend.ready()
 
-    def _put_bytes(self, key: str, content: bytes, mime_type: str) -> None:
+    def _put_stream(self, key: str, content: BinaryIO, mime_type: str) -> None:
         self._backend.put(key, content, mime_type)
 
     def _open_object(self, key: str) -> BinaryIO:

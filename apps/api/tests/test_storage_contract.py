@@ -37,10 +37,10 @@ class FakeRemoteBackend:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    def put(self, key: str, content: bytes, mime_type: str) -> None:
+    def put(self, key: str, content: BinaryIO, mime_type: str) -> None:
         if key in self.objects:
             raise FileExistsError(key)
-        self.objects[key] = content
+        self.objects[key] = content.read()
 
     def open(self, key: str) -> BinaryIO:
         if key not in self.objects:

@@ -5,6 +5,7 @@ import uuid
 from contextlib import contextmanager
 from unittest.mock import Mock
 
+import anyio
 import pytest
 
 from app.blocking_io import BlockingIO, run_blocking
@@ -155,5 +156,21 @@ def test_cancelled_queued_work_never_starts():
         release.set()
         await first
         dispatched.assert_not_called()
+
+    asyncio.run(scenario())
+
+
+def test_anyio_cancellation_drains_without_repeated_scope_cancellation():
+    finished = threading.Event()
+
+    def work():
+        time.sleep(0.06)
+        finished.set()
+
+    async def scenario():
+        with anyio.move_on_after(0.02) as scope:
+            await BlockingIO(1).run(work)
+        assert scope.cancel_called
+        assert finished.is_set()
 
     asyncio.run(scenario())

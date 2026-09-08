@@ -5,6 +5,8 @@ from collections.abc import Callable
 from typing import ParamSpec, TypeVar
 from weakref import ReferenceType, WeakKeyDictionary, ref
 
+import anyio
+
 P = ParamSpec("P")
 T = TypeVar("T")
 MAX_BLOCKING_IO = 4
@@ -25,13 +27,14 @@ class BlockingIO:
             except asyncio.CancelledError:
                 # Python cannot kill an IO thread. Keep its slot and await resource
                 # cleanup, including repeated task.cancel() calls during shutdown.
-                while not work.done():
-                    try:
-                        await asyncio.shield(work)
-                    except asyncio.CancelledError:
-                        continue
-                    except Exception:
-                        break
+                with anyio.CancelScope(shield=True):
+                    while not work.done():
+                        try:
+                            await asyncio.shield(work)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:
+                            break
                 if not work.cancelled():
                     work.exception()
                 raise

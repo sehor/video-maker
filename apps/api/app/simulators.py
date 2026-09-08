@@ -134,11 +134,13 @@ class FakeRemoteBackend:
         self._faults = faults or FaultInjector()
         self._objects: dict[str, tuple[bytes, FakeObjectMetadata]] = {}
 
-    def put(self, key: str, content: bytes, mime_type: str) -> None:
+    def put(self, key: str, content: BinaryIO, mime_type: str) -> None:
         self._faults.trigger(FaultPoint.STORAGE_PUT)
         if key in self._objects:
             raise FileExistsError(key)
-        body = bytes(content)
+        # The test simulator deliberately retains fixtures; production backends
+        # consume this stream using their SDK's bounded upload implementation.
+        body = content.read()
         metadata = FakeObjectMetadata(
             key=key,
             mime_type=mime_type,
