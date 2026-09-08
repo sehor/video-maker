@@ -13,12 +13,12 @@ const error = ref('')
 const form = reactive({ title: '', prompt: '', duration_seconds: 5, aspect_ratio: '16:9' as '16:9' | '9:16' })
 
 const load = async () => {
-  project.value = await api.request<Project>(`/v1/projects/${route.params.id}`)
-  shots.value = (await api.request<{ items: Shot[] }>(`/v1/projects/${route.params.id}/shots`)).items
+  project.value = await api.request('/v1/projects/{project_id}', { params: { project_id: String(route.params.id) } })
+  shots.value = (await api.request('/v1/projects/{project_id}/shots', { params: { project_id: String(route.params.id) } })).items
   assets.value = await loadProjectAssets(api.request, String(route.params.id))
 }
 const createShot = async () => {
-  const shot = await api.request<Shot>(`/v1/projects/${route.params.id}/shots`, { method: 'POST', body: JSON.stringify(form) })
+  const shot = await api.request('/v1/projects/{project_id}/shots', { params: { project_id: String(route.params.id) }, method: 'POST', body: form })
   await navigateTo(`/projects/${route.params.id}/shots/${shot.id}`)
 }
 const upload = async (event: Event) => {
@@ -29,7 +29,7 @@ const upload = async (event: Event) => {
   uploading.value = true
   error.value = ''
   try {
-    asset.value = await api.request<Asset>(`/v1/projects/${route.params.id}/assets`, { method: 'POST', body })
+    asset.value = await api.request('/v1/projects/{project_id}/assets', { params: { project_id: String(route.params.id) }, method: 'POST', body })
     assets.value = await loadProjectAssets(api.request, String(route.params.id))
   } catch (e) { error.value = (e as Error).message } finally { uploading.value = false }
 }

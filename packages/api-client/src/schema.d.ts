@@ -128,6 +128,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/shots/{shot_id}/references/{reference_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Shot Reference */
+        delete: operations["delete_shot_reference_v1_shots__shot_id__references__reference_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/assets": {
         parameters: {
             query?: never;
@@ -141,23 +158,6 @@ export interface paths {
         /** Upload Project Asset */
         post: operations["upload_project_asset_v1_projects__project_id__assets_post"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/shots/{shot_id}/references/{reference_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete Shot Reference */
-        delete: operations["delete_shot_reference_v1_shots__shot_id__references__reference_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -197,6 +197,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/outputs/{output_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Output */
+        get: operations["download_output_v1_outputs__output_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/quotes": {
         parameters: {
             query?: never;
@@ -208,6 +225,26 @@ export interface paths {
         put?: never;
         /** Create Generation Quote */
         post: operations["create_generation_quote_v1_quotes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/wallet/test-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Test Grant
+         * @description Development-only test credit grant; production returns 404.
+         */
+        post: operations["create_test_grant_v1_wallet_test_grants_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -342,23 +379,6 @@ export interface paths {
         };
         /** List Jobs */
         get: operations["list_jobs_v1_jobs_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/outputs/{output_id}/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Download Output */
-        get: operations["download_output_v1_outputs__output_id__content_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -911,6 +931,17 @@ export interface components {
              */
             aspect_ratio?: "16:9" | "9:16";
         };
+        /** TestGrantCreate */
+        TestGrantCreate: {
+            /** Tier */
+            tier: string;
+            /** Amount Ms */
+            amount_ms: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reason */
+            reason: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1331,6 +1362,36 @@ export interface operations {
             };
         };
     };
+    delete_shot_reference_v1_shots__shot_id__references__reference_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shot_id: string;
+                reference_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_project_assets_v1_projects__project_id__assets_get: {
         parameters: {
             query?: {
@@ -1388,36 +1449,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProjectAssetOut"];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_shot_reference_v1_shots__shot_id__references__reference_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                shot_id: string;
-                reference_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -1494,6 +1525,37 @@ export interface operations {
             };
         };
     };
+    download_output_v1_outputs__output_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                output_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_generation_quote_v1_quotes_post: {
         parameters: {
             query?: never;
@@ -1516,6 +1578,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuoteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_test_grant_v1_wallet_test_grants_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestGrantCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerTransactionOut"];
                 };
             };
             /** @description Validation Error */
@@ -1761,37 +1858,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GenerationJobList"];
-                };
-            };
-        };
-    };
-    download_output_v1_outputs__output_id__content_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                output_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

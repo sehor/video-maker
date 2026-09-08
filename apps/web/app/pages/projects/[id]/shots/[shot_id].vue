@@ -22,8 +22,8 @@ const saveReference = async () => {
   bindingBusy.value = true
   error.value = ''
   try {
-    shot.value = await api.request<Shot>(`/v1/shots/${route.params.shot_id}/input`, {
-      method: 'PUT', body: JSON.stringify({ asset_id: selectedAssetId.value || null })
+    shot.value = await api.request('/v1/shots/{shot_id}/input', { params: { shot_id: String(route.params.shot_id) },
+      method: 'PUT', body: { asset_id: selectedAssetId.value || null }
     })
   } catch (e) { error.value = (e as Error).message } finally { bindingBusy.value = false }
 }
@@ -32,11 +32,10 @@ const operation = ref<GenerationOperation | null>(null)
 const controller = () => {
   if (!session.value?.user.id) throw new Error('请登录后恢复操作')
   const userId = session.value.user.id
-  const scopedRequest: typeof api.request = async (path, options) => {
-    if (session.value?.user.id !== userId) throw new Error('登录用户已变化，请重新登录后恢复原操作')
-    return api.request(path, options)
-  }
-  return new GenerationOperationController(userId, String(route.params.shot_id), localStorage, scopedRequest)
+  return new GenerationOperationController(userId, String(route.params.shot_id), localStorage, api.request,
+    undefined, () => {
+      if (session.value?.user.id !== userId) throw new Error('登录用户已变化，请重新登录后恢复原操作')
+    })
 }
 const generate = async (startNew = false) => {
   if (busy.value) return
@@ -61,7 +60,7 @@ const generate = async (startNew = false) => {
   }
 }
 
-const loadWallet = async () => { wallet.value = await api.request<Wallet>('/v1/wallet') }
+const loadWallet = async () => { wallet.value = await api.request('/v1/wallet') }
 
 const grantTestSeconds = async () => {
   grantBusy.value = true
@@ -69,12 +68,12 @@ const grantTestSeconds = async () => {
   try {
     await api.request('/v1/wallet/test-grants', {
       method: 'POST',
-      body: JSON.stringify({
+      body: {
         tier: 'FAST',
         amount_ms: 10_000,
         idempotency_key: `web-test-grant:${crypto.randomUUID()}`,
         reason: '开发环境测试额度'
-      })
+      }
     })
     await loadWallet()
   } catch (e) { error.value = (e as Error).message } finally { grantBusy.value = false }
@@ -84,10 +83,10 @@ onMounted(async () => {
   try {
   operation.value = controller().read()
   const [loadedShot, , loadedAssets, options] = await Promise.all([
-    api.request<Shot>(`/v1/shots/${route.params.shot_id}`),
+    api.request('/v1/shots/{shot_id}', { params: { shot_id: String(route.params.shot_id) } }),
     loadWallet(),
     loadProjectAssets(api.request, String(route.params.id)),
-    api.request<{ requires_reference_image: boolean }>(`/v1/projects/${route.params.id}/generation-options`)
+    api.request('/v1/projects/{project_id}/generation-options', { params: { project_id: String(route.params.id) } })
   ])
   shot.value = loadedShot
   assets.value = loadedAssets

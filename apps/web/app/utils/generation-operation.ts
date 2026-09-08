@@ -1,4 +1,5 @@
 import { isTemporaryError } from './api-error'
+import type { ApiRequest } from './api-client'
 
 export type GenerationOperation = {
   version: 1
@@ -8,7 +9,6 @@ export type GenerationOperation = {
   quoteId?: string
   jobId?: string
 }
-type Request = <T>(path: string, options: RequestInit) => Promise<T>
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
 export class GenerationOperationController {
@@ -16,7 +16,8 @@ export class GenerationOperationController {
   private inFlight?: Promise<string>
 
   constructor(private userId: string, private shotId: string, private store: Store,
-    private request: Request, private uuid = () => crypto.randomUUID()) {
+    private request: ApiRequest, private uuid = () => crypto.randomUUID(),
+    private beforeRequest = () => {}) {
     this.key = `generation-operation:v1:${userId}:${shotId}`
   }
 
@@ -57,17 +58,19 @@ export class GenerationOperationController {
     save() // Persist before any request; storage failure must not dispatch a new operation.
     try {
       if (operation.phase === 'quote') {
-        const quote = await this.request<{ id: string }>('/v1/quotes', {
+        this.beforeRequest()
+        const quote = await this.request('/v1/quotes', {
           method: 'POST', headers: { 'Idempotency-Key': `${operation.id}:quote` },
-          body: JSON.stringify({ shot_id: this.shotId, tier: 'FAST', resolution: '720P', variant_count: 1 })
+          body: { shot_id: this.shotId, tier: 'FAST', resolution: '720P', variant_count: 1 }
         })
         operation.quoteId = quote.id
         operation.phase = 'submit'
         save()
       }
-      const job = await this.request<{ id: string }>('/v1/generations', {
+      this.beforeRequest()
+      const job = await this.request('/v1/generations', {
         method: 'POST', headers: { 'Idempotency-Key': `${operation.id}:generate` },
-        body: JSON.stringify({ shot_id: this.shotId, quote_id: operation.quoteId })
+        body: { shot_id: this.shotId, quote_id: operation.quoteId! }
       })
       operation.jobId = job.id
       operation.phase = 'complete'

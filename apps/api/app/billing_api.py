@@ -31,7 +31,7 @@ def create_generation_quote(
     "/wallet/test-grants",
     response_model=LedgerTransactionOut,
     status_code=201,
-    include_in_schema=False,
+    description="Development-only test credit grant; production returns 404.",
 )
 def create_test_grant(
     payload: TestGrantCreate, user: CurrentUser, db: Db, idempotency_key: IdempotencyKey = None

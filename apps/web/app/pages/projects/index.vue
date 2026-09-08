@@ -9,15 +9,15 @@ const description = ref('')
 const error = ref('')
 
 const load = async () => {
-  const data = await api.request<{ items: Project[] }>('/v1/projects')
+  const data = await api.request('/v1/projects')
   projects.value = data.items
 }
 
 const create = async () => {
   error.value = ''
   try {
-    const project = await api.request<Project>('/v1/projects', {
-      method: 'POST', body: JSON.stringify({ name: name.value, description: description.value || null })
+    const project = await api.request('/v1/projects', {
+      method: 'POST', body: { name: name.value, description: description.value || null }
     })
     open.value = false
     await navigateTo(`/projects/${project.id}`)

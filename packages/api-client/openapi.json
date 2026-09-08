@@ -594,6 +594,54 @@
         }
       }
     },
+    "/v1/shots/{shot_id}/references/{reference_id}": {
+      "delete": {
+        "summary": "Delete Shot Reference",
+        "operationId": "delete_shot_reference_v1_shots__shot_id__references__reference_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "shot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Shot Id"
+            }
+          },
+          {
+            "name": "reference_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Reference Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/projects/{project_id}/assets": {
       "get": {
         "summary": "List Project Assets",
@@ -720,54 +768,6 @@
         }
       }
     },
-    "/v1/shots/{shot_id}/references/{reference_id}": {
-      "delete": {
-        "summary": "Delete Shot Reference",
-        "operationId": "delete_shot_reference_v1_shots__shot_id__references__reference_id__delete",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "shot_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Shot Id"
-            }
-          },
-          {
-            "name": "reference_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Reference Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/uploads": {
       "post": {
         "summary": "Upload Asset",
@@ -854,6 +854,49 @@
         }
       }
     },
+    "/v1/outputs/{output_id}/content": {
+      "get": {
+        "summary": "Download Output",
+        "operationId": "download_output_v1_outputs__output_id__content_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "output_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Output Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/quotes": {
       "post": {
         "summary": "Create Generation Quote",
@@ -898,6 +941,68 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QuoteOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/wallet/test-grants": {
+      "post": {
+        "summary": "Create Test Grant",
+        "description": "Development-only test credit grant; production returns 404.",
+        "operationId": "create_test_grant_v1_wallet_test_grants_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestGrantCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerTransactionOut"
                 }
               }
             }
@@ -1279,49 +1384,6 @@
             "HTTPBearer": []
           }
         ]
-      }
-    },
-    "/v1/outputs/{output_id}/content": {
-      "get": {
-        "summary": "Download Output",
-        "operationId": "download_output_v1_outputs__output_id__content_get",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "output_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Output Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       }
     }
   },
@@ -2591,6 +2653,43 @@
         },
         "type": "object",
         "title": "ShotUpdate"
+      },
+      "TestGrantCreate": {
+        "properties": {
+          "tier": {
+            "type": "string",
+            "maxLength": 24,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "title": "Tier"
+          },
+          "amount_ms": {
+            "type": "integer",
+            "maximum": 86400000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Ms"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tier",
+          "amount_ms",
+          "idempotency_key",
+          "reason"
+        ],
+        "title": "TestGrantCreate"
       },
       "ValidationError": {
         "properties": {

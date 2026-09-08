@@ -23,18 +23,18 @@ const download = async () => {
   const output = job.value?.outputs?.find(item => item.id === job.value?.final_output_id)
   if (!output || disposed || downloadBusy.value) return
   downloadBusy.value = true
-  await resource.load(signal => api.download(`/v1/outputs/${output.id}/content`, signal))
+  await resource.load(signal => api.download('/v1/outputs/{output_id}/content', { params: { output_id: output.id }, signal }))
   if (!disposed) downloadBusy.value = false
 }
 const poller = new RecoveringPoller<Job>({
-  fetch: signal => api.request<Job>(`/v1/generations/${route.params.id}`, { signal }),
+  fetch: signal => api.request('/v1/generations/{job_id}', { params: { job_id: String(route.params.id) }, signal }),
   update: value => { job.value = value; if (value.status === 'SUCCEEDED' && !videoUrl.value) void download() },
   active: value => activeStatuses.has(value.status),
   error: message => { error.value = message }
 })
 const cancel = async () => {
   try {
-    const value = await api.request<Job>(`/v1/generations/${route.params.id}/cancel`, { method: 'POST', signal: cancelController.signal })
+    const value = await api.request('/v1/generations/{job_id}/cancel', { params: { job_id: String(route.params.id) }, method: 'POST', signal: cancelController.signal })
     if (!disposed) { job.value = value; poller.start() }
   } catch (e) { if (!disposed) error.value = (e as Error).message }
 }

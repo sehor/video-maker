@@ -2,7 +2,7 @@
 import type { Job } from '~/types/domain'
 const api = useApi()
 const jobs = ref<Job[]>([])
-onMounted(async () => { jobs.value = (await api.request<{ items: Job[] }>('/v1/jobs')).items })
+onMounted(async () => { jobs.value = (await api.request('/v1/jobs')).items })
 </script>
 
 <template>
