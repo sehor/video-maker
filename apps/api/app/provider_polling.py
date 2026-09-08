@@ -48,7 +48,17 @@ class ProviderPollingService:
     _polling: ProviderPollingPolicy
     _clock: Callable[[], datetime]
 
-    def _reserve_poll(self, context: AttemptContext) -> PollReservation:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        polling: ProviderPollingPolicy,
+        clock: Callable[[], datetime],
+    ) -> None:
+        self._session_factory = session_factory
+        self._polling = polling
+        self._clock = clock
+
+    def reserve_poll(self, context: AttemptContext) -> PollReservation:
         """Persist one poll slot before the external call so crashes consume its budget."""
 
         with self._session_factory() as db:
@@ -76,7 +86,7 @@ class ProviderPollingService:
                 AttemptStatus.RUNNING,
             }:
                 return PollReservation(poll_count, acquired=False, exhausted=False)
-            if self._now() >= deadline_at or poll_count >= self._polling.maximum_polls:
+            if self.now() >= deadline_at or poll_count >= self._polling.maximum_polls:
                 return PollReservation(poll_count, acquired=False, exhausted=True)
 
             next_poll_count = poll_count + 1
@@ -101,7 +111,7 @@ class ProviderPollingService:
                 return PollReservation(next_poll_count, acquired=False, exhausted=False)
             return PollReservation(next_poll_count, acquired=True, exhausted=False)
 
-    def _now(self) -> datetime:
+    def now(self) -> datetime:
         now = self._clock()
         if now.tzinfo is None:
             raise ValueError("provider execution clock must be timezone-aware")

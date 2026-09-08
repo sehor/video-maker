@@ -27,7 +27,10 @@ class ProviderCallbackService:
 
     _session_factory: sessionmaker[Session]
 
-    def _receive_provider_event(
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def receive_provider_event(
         self,
         provider_code: str,
         body: bytes,
@@ -95,7 +98,7 @@ class ProviderCallbackService:
             db.commit()
             return inbox.id, lock_token if changed.rowcount == 1 else None
 
-    def _reset_provider_event(self, event_id: uuid.UUID, lock_token: str) -> None:
+    def reset_provider_event(self, event_id: uuid.UUID, lock_token: str) -> None:
         with self._session_factory() as db:
             db.execute(
                 update(ProviderEventInbox)
@@ -112,7 +115,7 @@ class ProviderCallbackService:
             )
             db.commit()
 
-    def _finish_provider_event(
+    def finish_provider_event(
         self, event_id: uuid.UUID, lock_token: str, context: AttemptContext
     ) -> None:
         with self._session_factory() as db:
@@ -134,7 +137,7 @@ class ProviderCallbackService:
             )
             db.commit()
 
-    def _webhook_result(self, event_id: uuid.UUID) -> ProviderWebhookResult:
+    def webhook_result(self, event_id: uuid.UUID) -> ProviderWebhookResult:
         with self._session_factory() as db:
             inbox = db.get(ProviderEventInbox, event_id)
             if inbox is None:

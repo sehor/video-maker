@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -6,9 +7,14 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.artifacts import ArtifactReceiptError, RemoteArtifactReceiver
+from app.artifacts import (
+    ArtifactReceiptError,
+    MockArtifactReceiver,
+    PublishedArtifact,
+    RemoteArtifactReceiver,
+)
 from app.errors import ApiError
-from app.media import MediaPolicy
+from app.media import MediaPolicy, MediaValidator
 from app.models import (
     AttemptStatus,
     GenerationAttempt,
@@ -28,7 +34,10 @@ from app.provider import (
     VideoProvider,
     is_retryable_failure,
 )
-from app.provider_execution_context import AttemptContext
+from app.provider_execution_context import AttemptContext, AttemptContextService
+from app.provider_settlement import ProviderSettlementService
+from app.provider_submission import ProviderSubmissionService
+from app.routing import MAX_PROVIDER_OUTPUT_BYTES
 from app.state_machine import transition_attempt, transition_job
 from app.storage import ObjectStorage
 
@@ -63,7 +72,29 @@ class ProviderCompletionService:
     _storage: ObjectStorage
     _artifact_receiver: RemoteArtifactReceiver
 
-    async def _result_for_event(
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        storage: ObjectStorage,
+        artifact_receiver: RemoteArtifactReceiver,
+        contexts: AttemptContextService,
+        submission: ProviderSubmissionService,
+        settlement: ProviderSettlementService,
+        record_artifact: Callable[..., None],
+        media_validator: MediaValidator,
+    ) -> None:
+        self._session_factory = session_factory
+        self._storage = storage
+        self._artifact_receiver = artifact_receiver
+        self._contexts = contexts
+        self._submission = submission
+        self._settlement = settlement
+        self._record_artifact = record_artifact
+        self._mock_receiver = MockArtifactReceiver(
+            storage, record_artifact, MAX_PROVIDER_OUTPUT_BYTES, media_validator
+        )
+
+    async def result_for_event(
         self,
         provider: VideoProvider,
         context: AttemptContext,
@@ -87,12 +118,14 @@ class ProviderCompletionService:
             provider_job_id=event.provider_job_id,
         )
 
-    def _apply_provider_result(
+    def apply_provider_result(
         self, context: AttemptContext, result: PollResult
     ) -> ProviderResultAction:
         if result.provider_job_id and context.provider_job_id is None:
-            self._record_submit_accepted(context, result.provider_job_id, reconciled=True)
-            refreshed = self._load_attempt_by_provider_job(
+            self._submission.record_submit_accepted(
+                context, result.provider_job_id, reconciled=True
+            )
+            refreshed = self._contexts.load_attempt_by_provider_job(
                 context.provider_code, result.provider_job_id
             )
             if refreshed is None:
@@ -101,11 +134,11 @@ class ProviderCompletionService:
         if result.status in {ProviderStatus.PENDING, ProviderStatus.RUNNING}:
             return ProviderResultAction.WAIT
         if result.status == ProviderStatus.UNKNOWN:
-            self._record_reconcile_pending(context)
+            self._submission.record_reconcile_pending(context)
             return ProviderResultAction.WAIT
-        return self._complete_provider_result(context, result)
+        return self.complete_provider_result(context, result)
 
-    def _complete_provider_result(
+    def complete_provider_result(
         self, context: AttemptContext, result: PollResult
     ) -> ProviderResultAction:
         """Single idempotent completion path for polling, webhooks, and cancellation."""
@@ -116,24 +149,24 @@ class ProviderCompletionService:
                     context.job_id, context.attempt_id, result.output.object_key, "SOURCE"
                 )
             except (ValueError, ApiError):
-                self._fail_attempt(
+                self.fail_attempt(
                     context,
                     ProviderFailure(
                         FailureCode.OUTPUT_CORRUPTED, "Provider 输出对象不在受控命名空间"
                     ),
                 )
                 return ProviderResultAction.COMPLETE
-        source_failure = self._cost_source_failure(context, result)
+        source_failure = self.cost_source_failure(context, result)
         if source_failure is not None:
-            self._fail_attempt(context, source_failure)
+            self.fail_attempt(context, source_failure)
             return ProviderResultAction.COMPLETE
         if result.status == ProviderStatus.SUCCEEDED:
             if result.output is not None:
-                snapshot_failure = self._snapshot_failure(context, result)
+                snapshot_failure = self.snapshot_failure(context, result)
                 if snapshot_failure is None:
-                    self._finish_output(context, result.output, result)
+                    self.finish_output(context, result.output, result)
                     return ProviderResultAction.COMPLETE
-                self._fail_attempt(context, snapshot_failure)
+                self.fail_attempt(context, snapshot_failure)
                 return ProviderResultAction.COMPLETE
             result = PollResult(
                 status=ProviderStatus.FAILED,
@@ -141,18 +174,18 @@ class ProviderCompletionService:
                 failure=ProviderFailure(FailureCode.OUTPUT_MISSING, "Provider 未返回输出"),
             )
         if result.status == ProviderStatus.CANCELLED:
-            self._finish_cancelled(context, result)
+            self.finish_cancelled(context, result)
             return ProviderResultAction.COMPLETE
         failure = result.failure or ProviderFailure(
             FailureCode.INTERNAL_ERROR, "Provider 返回未分类错误"
         )
         return (
             ProviderResultAction.RETRY
-            if self._fail_attempt(context, failure, result=result)
+            if self.fail_attempt(context, failure, result=result)
             else ProviderResultAction.COMPLETE
         )
 
-    async def _with_terminal_cost(
+    async def with_terminal_cost(
         self,
         provider: VideoProvider,
         context: AttemptContext,
@@ -182,7 +215,7 @@ class ProviderCompletionService:
         return replace(result, cost=cost)
 
     @staticmethod
-    def _snapshot_failure(context: AttemptContext, result: PollResult) -> ProviderFailure | None:
+    def snapshot_failure(context: AttemptContext, result: PollResult) -> ProviderFailure | None:
         if result.metrics is None or result.versions is None or result.cost is None:
             return ProviderFailure(
                 FailureCode.INTERNAL_ERROR,
@@ -196,7 +229,7 @@ class ProviderCompletionService:
         return None
 
     @staticmethod
-    def _cost_source_failure(context: AttemptContext, result: PollResult) -> ProviderFailure | None:
+    def cost_source_failure(context: AttemptContext, result: PollResult) -> ProviderFailure | None:
         if result.cost is None:
             return None
         simulated_provider = context.provider_code in {"mock", "runpod-simulator"}
@@ -208,7 +241,7 @@ class ProviderCompletionService:
         )
 
     @staticmethod
-    def _apply_attempt_snapshot(
+    def apply_attempt_snapshot(
         attempt: GenerationAttempt,
         result: PollResult,
     ) -> None:
@@ -254,7 +287,7 @@ class ProviderCompletionService:
                 raise ValueError(f"attempt snapshot field {field_name} is immutable")
             setattr(attempt, field_name, value)
 
-    def _fail_attempt(
+    def fail_attempt(
         self,
         context: AttemptContext,
         failure: ProviderFailure,
@@ -271,7 +304,7 @@ class ProviderCompletionService:
             if job is None or attempt is None:
                 return False
             if result is not None:
-                self._apply_attempt_snapshot(attempt, result)
+                self.apply_attempt_snapshot(attempt, result)
             if job.status == JobStatus.CANCEL_REQUESTED:
                 if not transition_job(
                     db,
@@ -293,7 +326,7 @@ class ProviderCompletionService:
                 attempt.finished_at = datetime.now(UTC)
                 job.failure_code = FailureCode.USER_CANCELLED.value
                 job.finished_at = datetime.now(UTC)
-                self._settle_released(db, job)
+                self._settlement.settle_released(db, job)
                 db.commit()
                 return False
             target = target or (
@@ -311,7 +344,7 @@ class ProviderCompletionService:
                 return False
             attempt.failure_code = failure.code.value
             attempt.finished_at = datetime.now(UTC)
-            if retryable and self._attempt_budget(db, attempt).allows_retry:
+            if retryable and self.attempt_budget(db, attempt).allows_retry:
                 retry = GenerationAttempt(
                     job_id=job.id,
                     attempt_no=attempt.attempt_no + 1,
@@ -346,14 +379,14 @@ class ProviderCompletionService:
                 job.failure_code = failure.code.value
                 job.error_message = failure.message
                 job.finished_at = datetime.now(UTC)
-                self._settle_released(db, job)
+                self._settlement.settle_released(db, job)
                 db.commit()
             else:
                 db.rollback()
             return False
 
     @staticmethod
-    def _attempt_budget(db: Session, attempt: GenerationAttempt) -> AttemptBudget:
+    def attempt_budget(db: Session, attempt: GenerationAttempt) -> AttemptBudget:
         candidate_filter = (
             GenerationAttempt.provider_endpoint_id == attempt.provider_endpoint_id
             if attempt.provider_endpoint_id is not None
@@ -371,130 +404,51 @@ class ProviderCompletionService:
         )
         return AttemptBudget(total_attempts=total or 0, candidate_attempts=candidate or 0)
 
-    def _finish_output(
-        self,
-        context: AttemptContext,
-        output: ProviderOutput,
-        result: PollResult,
-    ) -> None:
-        if output.object_key is not None:
-            self._finish_remote_output(context, output, result)
-            return
-        self._finish_embedded_output(context, output, result)
-
-    def _finish_remote_output(
-        self,
-        context: AttemptContext,
-        output: ProviderOutput,
-        result: PollResult,
+    def finish_output(
+        self, context: AttemptContext, output: ProviderOutput, result: PollResult
     ) -> None:
         try:
-            published = self._artifact_receiver.receive_and_publish(
-                job_id=context.job_id,
-                attempt_id=context.attempt_id,
-                output=output,
-                policy=MediaPolicy(
-                    expected_duration_ms=context.duration_ms,
-                    expected_aspect_ratio=context.aspect_ratio,
-                ),
-            )
-        except ArtifactReceiptError as exc:
-            self._fail_attempt(context, exc.failure, result=result)
-            return
-
-        stored = published.stored
-        facts = published.facts
-        try:
-            with self._session_factory() as db:
-                job = db.get(GenerationJob, context.job_id)
-                attempt = db.get(GenerationAttempt, context.attempt_id)
-                if (
-                    job is None
-                    or attempt is None
-                    or job.status not in {JobStatus.RUNNING, JobStatus.CANCEL_REQUESTED}
-                    or attempt.status != AttemptStatus.RUNNING
-                ):
-                    self._storage.delete(stored.key)
-                    return
-                self._apply_attempt_snapshot(attempt, result)
-                if not transition_job(
-                    db,
-                    job,
-                    JobStatus.POSTPROCESSING,
-                    "output.postprocessing",
-                    f"attempt:{attempt.id}:postprocessing:v1",
-                ) or not transition_job(
-                    db,
-                    job,
-                    JobStatus.VALIDATING,
-                    "output.validating",
-                    f"attempt:{attempt.id}:validating:v1",
-                ):
-                    db.rollback()
-                    self._storage.delete(stored.key)
-                    return
-                generated = GenerationOutput(
-                    job_id=job.id,
-                    attempt_id=attempt.id,
-                    object_key=stored.key,
-                    media_type=stored.mime_type,
-                    duration_ms=facts.duration_ms,
-                    width=facts.width,
-                    height=facts.height,
-                    fps=facts.frame_rate,
-                    codec=facts.codec,
-                    size_bytes=stored.size_bytes,
-                    sha256=stored.sha256,
-                    validation_status=OutputValidationStatus.VALID,
+            if output.object_key is not None:
+                published = self._artifact_receiver.receive_and_publish(
+                    job_id=context.job_id,
+                    attempt_id=context.attempt_id,
+                    output=output,
+                    policy=MediaPolicy(context.duration_ms, context.aspect_ratio),
                 )
-                db.add(generated)
-                db.flush()
-                job.final_output_id = generated.id
-                if not transition_job(
-                    db,
-                    job,
-                    JobStatus.SUCCEEDED,
-                    "provider.completed",
-                    f"job:{job.id}:terminal-succeeded:v1",
-                    {"output_id": str(generated.id)},
-                ) or not transition_attempt(
-                    db,
-                    attempt,
-                    AttemptStatus.SUCCEEDED,
-                    "attempt.succeeded",
-                    f"attempt:{attempt.id}:terminal-succeeded:v1",
-                    {"output_id": str(generated.id)},
-                ):
-                    db.rollback()
-                    self._storage.delete(stored.key)
-                    return
-                job.finished_at = datetime.now(UTC)
-                attempt.finished_at = datetime.now(UTC)
-                self._settle_succeeded(db, job)
-                db.commit()
+                valid = True
+            elif context.provider_code in {"mock", "runpod-simulator"}:
+                # Mock has a fixed 2s landscape fixture; the offline simulator
+                # declares the requested dimensions. Neither is a real route.
+                policy = (
+                    MediaPolicy(2000, "16:9")
+                    if context.provider_code == "mock"
+                    else MediaPolicy(context.duration_ms, context.aspect_ratio)
+                )
+                published, valid = self._mock_receiver.receive(
+                    context.job_id, context.attempt_id, output, policy
+                )
+            else:
+                raise ArtifactReceiptError(
+                    ProviderFailure(FailureCode.OUTPUT_MISSING, "真实 Provider 必须返回受控对象")
+                )
+        except ArtifactReceiptError as exc:
+            self.fail_attempt(context, exc.failure, result=result)
+            return
+        try:
+            self.commit_output(context, published, result, valid=valid)
         except Exception:
-            self._storage.delete(stored.key)
+            self._storage.delete(published.stored.key)
             raise
 
-    def _finish_embedded_output(
+    def commit_output(
         self,
         context: AttemptContext,
-        output: ProviderOutput,
+        published: PublishedArtifact,
         result: PollResult,
+        *,
+        valid: bool,
     ) -> None:
-        if output.content is None:
-            self._fail_attempt(
-                context,
-                ProviderFailure(FailureCode.OUTPUT_MISSING, "Provider 未返回输出"),
-            )
-            return
-        claim = self._storage.write_claim(
-            f"outputs/{context.job_id}/{context.attempt_id}",
-            mime_type=output.media_type,
-            max_bytes=max(1, len(output.content)),
-        )
-        self._record_artifact(context.job_id, context.attempt_id, claim.object_key, "FINAL")
-        stored = self._storage.put(claim, output.content, output.media_type)
+        stored, facts = published.stored, published.facts
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
             attempt = db.get(GenerationAttempt, context.attempt_id)
@@ -506,7 +460,7 @@ class ProviderCompletionService:
             ):
                 self._storage.delete(stored.key)
                 return
-            self._apply_attempt_snapshot(attempt, result)
+            self.apply_attempt_snapshot(attempt, result)
             if not transition_job(
                 db,
                 job,
@@ -516,17 +470,16 @@ class ProviderCompletionService:
             ):
                 self._storage.delete(stored.key)
                 return
-            valid = len(output.content) >= 8 and output.content[4:8] == b"ftyp"
             generated = GenerationOutput(
                 job_id=job.id,
                 attempt_id=attempt.id,
                 object_key=stored.key,
                 media_type=stored.mime_type,
-                duration_ms=output.duration_ms,
-                width=output.width,
-                height=output.height,
-                fps=output.fps,
-                codec=output.codec,
+                duration_ms=facts.duration_ms,
+                width=facts.width,
+                height=facts.height,
+                fps=facts.frame_rate,
+                codec=facts.codec,
                 size_bytes=stored.size_bytes,
                 sha256=stored.sha256,
                 validation_status=(
@@ -572,7 +525,7 @@ class ProviderCompletionService:
                 job.failure_code = failure.code.value
                 job.error_message = failure.message
                 job.finished_at = datetime.now(UTC)
-                self._settle_released(db, job)
+                self._settlement.settle_released(db, job)
                 db.commit()
                 return
             job.final_output_id = generated.id
@@ -596,10 +549,10 @@ class ProviderCompletionService:
                 return
             job.finished_at = datetime.now(UTC)
             attempt.finished_at = datetime.now(UTC)
-            self._settle_succeeded(db, job)
+            self._settlement.settle_succeeded(db, job)
             db.commit()
 
-    def _finish_cancelled(self, context: AttemptContext, result: PollResult) -> None:
+    def finish_cancelled(self, context: AttemptContext, result: PollResult) -> None:
         with self._session_factory() as db:
             job = db.scalar(
                 select(GenerationJob).where(GenerationJob.id == context.job_id).with_for_update()
@@ -607,7 +560,7 @@ class ProviderCompletionService:
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if job is None or attempt is None:
                 return
-            self._apply_attempt_snapshot(attempt, result)
+            self.apply_attempt_snapshot(attempt, result)
             if job.status not in {
                 JobStatus.ROUTING,
                 JobStatus.SUBMITTED,
@@ -635,5 +588,5 @@ class ProviderCompletionService:
             attempt.finished_at = datetime.now(UTC)
             job.failure_code = FailureCode.USER_CANCELLED.value
             job.finished_at = datetime.now(UTC)
-            self._settle_released(db, job)
+            self._settlement.settle_released(db, job)
             db.commit()

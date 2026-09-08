@@ -84,8 +84,10 @@ def test_accepted_input_survives_edits_unbind_restart_and_retry(raw_client, simu
     assert first.prompt == shot["prompt"]
     assert _claim_payload(first.input_claim)["key"] == asset_key
     service = executor()
-    context = service._load_active_attempt(job_id)
-    assert service._fail_attempt(context, ProviderFailure(FailureCode.NETWORK_TIMEOUT, "retry"))
+    context = service._contexts.load_active_attempt(job_id)
+    assert service._completion.fail_attempt(
+        context, ProviderFailure(FailureCode.NETWORK_TIMEOUT, "retry")
+    )
     asyncio.run(executor().execute(job_id))
     retry = submitted_request(job_id)
     assert retry.attempt_id != first.attempt_id

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -26,7 +27,23 @@ class ProviderSubmissionService:
     _claim_ttl: timedelta
     _session_factory: sessionmaker[Session]
 
-    def _submit_request(self, context: AttemptContext) -> SubmitRequest:
+    def __init__(
+        self,
+        storage: ObjectStorage,
+        routes: RouteRegistry,
+        callback_claims: CallbackClaimIssuer,
+        claim_ttl: timedelta,
+        session_factory: sessionmaker[Session],
+        record_artifact: Callable[..., None],
+    ) -> None:
+        self._storage = storage
+        self._routes = routes
+        self._callback_claims = callback_claims
+        self._claim_ttl = claim_ttl
+        self._session_factory = session_factory
+        self._record_artifact = record_artifact
+
+    def submit_request(self, context: AttemptContext) -> SubmitRequest:
         if context.route_candidate_id is None:
             raise RuntimeError("generation attempt has no immutable route candidate")
         route = self._routes.by_candidate_id(context.route_candidate_id)
@@ -80,7 +97,7 @@ class ProviderSubmissionService:
             mode=context.mode,
         )
 
-    def _start_submit(self, context: AttemptContext) -> bool:
+    def start_submit(self, context: AttemptContext) -> bool:
         with self._session_factory() as db:
             job = db.get(GenerationJob, context.job_id)
             attempt = db.get(GenerationAttempt, context.attempt_id)
@@ -101,7 +118,7 @@ class ProviderSubmissionService:
             db.commit()
             return True
 
-    def _record_submit_accepted(
+    def record_submit_accepted(
         self, context: AttemptContext, provider_job_id: str, *, reconciled: bool = False
     ) -> None:
         with self._session_factory() as db:
@@ -150,12 +167,12 @@ class ProviderSubmissionService:
                 attempt.started_at = attempt.started_at or datetime.now(UTC)
             db.commit()
 
-    def _record_submit_unknown(self, context: AttemptContext) -> None:
+    def record_submit_unknown(self, context: AttemptContext) -> None:
         with self._session_factory() as db:
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if attempt is None or attempt.status != AttemptStatus.SUBMITTING:
                 return
-            self._add_same_state_event(
+            self.add_same_state_event(
                 db,
                 attempt,
                 "provider.submit_unknown",
@@ -163,12 +180,12 @@ class ProviderSubmissionService:
             )
             db.commit()
 
-    def _record_reconcile_pending(self, context: AttemptContext) -> None:
+    def record_reconcile_pending(self, context: AttemptContext) -> None:
         with self._session_factory() as db:
             attempt = db.get(GenerationAttempt, context.attempt_id)
             if attempt is None:
                 return
-            self._add_same_state_event(
+            self.add_same_state_event(
                 db,
                 attempt,
                 "provider.reconcile_pending",
@@ -177,7 +194,7 @@ class ProviderSubmissionService:
             db.commit()
 
     @staticmethod
-    def _add_same_state_event(
+    def add_same_state_event(
         db: Session,
         attempt: GenerationAttempt,
         event_type: str,

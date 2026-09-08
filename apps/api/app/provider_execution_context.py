@@ -43,9 +43,7 @@ class AttemptContext:
             mode=self.mode,
         )
 
-    def provider_cancel_attempt(
-        self, idempotency_key: str | None = None
-    ) -> ProviderAttempt:
+    def provider_cancel_attempt(self, idempotency_key: str | None = None) -> ProviderAttempt:
         expected = provider_cancel_key(self.attempt_id)
         if idempotency_key is not None and idempotency_key != expected:
             raise ValueError("provider cancel idempotency key is not bound to attempt_id")
@@ -57,7 +55,10 @@ class AttemptContextService:
 
     _session_factory: sessionmaker[Session]
 
-    def _context_for(
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def context_for(
         self,
         db: Session,
         job: GenerationJob,
@@ -85,7 +86,7 @@ class AttemptContextService:
             status=attempt.status,
         )
 
-    def _load_active_attempt(self, job_id: uuid.UUID) -> AttemptContext | None:
+    def load_active_attempt(self, job_id: uuid.UUID) -> AttemptContext | None:
         with self._session_factory() as db:
             job = db.get(GenerationJob, job_id)
             if job is None or job.status in {
@@ -104,9 +105,9 @@ class AttemptContextService:
             )
             if attempt is None:
                 return None
-            return self._context_for(db, job, attempt)
+            return self.context_for(db, job, attempt)
 
-    def _load_cancellable_attempt(
+    def load_cancellable_attempt(
         self, job_id: uuid.UUID, attempt_id: uuid.UUID
     ) -> AttemptContext | None:
         with self._session_factory() as db:
@@ -116,9 +117,9 @@ class AttemptContextService:
             attempt = db.get(GenerationAttempt, attempt_id)
             if attempt is None or attempt.job_id != job_id:
                 return None
-            return self._context_for(db, job, attempt)
+            return self.context_for(db, job, attempt)
 
-    def _load_attempt_by_provider_job(
+    def load_attempt_by_provider_job(
         self, provider_code: str, provider_job_id: str
     ) -> AttemptContext | None:
         with self._session_factory() as db:
@@ -133,4 +134,4 @@ class AttemptContextService:
             job = db.get(GenerationJob, attempt.job_id)
             if job is None:
                 return None
-            return self._context_for(db, job, attempt)
+            return self.context_for(db, job, attempt)

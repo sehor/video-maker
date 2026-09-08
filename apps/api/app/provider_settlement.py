@@ -9,10 +9,10 @@ class ProviderSettlementService:
     """Applies the one-time ledger outcome inside the caller's terminal transaction."""
 
     @staticmethod
-    def _settle_succeeded(db: Session, job: GenerationJob) -> None:
+    def settle_succeeded(db: Session, job: GenerationJob) -> None:
         solidify_project_route(db, job)
         finish_reservation(db, job, settle=True)
 
     @staticmethod
-    def _settle_released(db: Session, job: GenerationJob) -> None:
+    def settle_released(db: Session, job: GenerationJob) -> None:
         finish_reservation(db, job, settle=False)

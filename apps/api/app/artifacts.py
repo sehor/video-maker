@@ -26,6 +26,47 @@ class PublishedArtifact:
     facts: MediaFacts
 
 
+class MockArtifactReceiver:
+    """Accept embedded offline fixtures; never used by remote providers."""
+
+    def __init__(
+        self,
+        storage: ObjectStorage,
+        register_write: Callable[..., None],
+        max_bytes: int,
+        validator: MediaValidator,
+    ) -> None:
+        self._storage = storage
+        self._register_write = register_write
+        self._max_bytes = max_bytes
+        self._validator = validator
+
+    def receive(
+        self,
+        job_id: uuid.UUID,
+        attempt_id: uuid.UUID,
+        output: ProviderOutput,
+        policy: MediaPolicy,
+    ) -> tuple[PublishedArtifact, bool]:
+        content = output.content
+        if not content:
+            raise ArtifactReceiptError(ProviderFailure(FailureCode.OUTPUT_MISSING, "Mock 输出为空"))
+        try:
+            facts = self._validator.validate(output, policy)
+        except MediaValidationError as exc:
+            raise ArtifactReceiptError(ProviderFailure(exc.failure_code, exc.message)) from exc
+        claim = self._storage.write_claim(
+            f"outputs/{job_id}/{attempt_id}",
+            mime_type=output.media_type,
+            max_bytes=self._max_bytes,
+        )
+        self._register_write(job_id, attempt_id, claim.object_key, "FINAL")
+        stored = self._storage.put(claim, content, output.media_type)
+        # Preserve the mock corruption fixture's INVALID row for diagnostics.
+        valid = len(content) >= 8 and content[4:8] == b"ftyp"
+        return PublishedArtifact(stored, facts), valid
+
+
 class RemoteArtifactReceiver:
     """Accepts declared video metadata and copies a nonempty, bounded artifact."""
 

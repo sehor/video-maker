@@ -57,14 +57,7 @@ class ProviderExecutionStep:
     retry_after: timedelta | None = None
 
 
-class GenerationExecutionService(
-    AttemptContextService,
-    ProviderSubmissionService,
-    ProviderPollingService,
-    ProviderCallbackService,
-    ProviderSettlementService,
-    ProviderCompletionService,
-):
+class GenerationExecutionService:
     """Thin coordinator for submit, poll, callback, completion, and cancellation."""
 
     def __init__(
@@ -78,6 +71,7 @@ class GenerationExecutionService(
         polling_policy: ProviderPollingPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
         media_validator: MediaValidator | None = None,
+        artifact_receiver: RemoteArtifactReceiver | None = None,
     ) -> None:
         self._storage = storage
         self._provider_override = provider
@@ -88,13 +82,36 @@ class GenerationExecutionService(
         self._session_factory = session_factory
         self._polling = polling_policy or ProviderPollingPolicy()
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._artifact_receiver = RemoteArtifactReceiver(
+        validator = media_validator or MediaValidator()
+        self._artifact_receiver = artifact_receiver or RemoteArtifactReceiver(
             storage,
-            media_validator or MediaValidator(),
+            validator,
             max_bytes=MAX_PROVIDER_OUTPUT_BYTES,
             register_write=lambda job, attempt, key: self._record_artifact(
                 job, attempt, key, "FINAL"
             ),
+        )
+
+        self._contexts = AttemptContextService(session_factory)
+        self._submission = ProviderSubmissionService(
+            storage,
+            self._routes,
+            self._callback_claims,
+            self._claim_ttl,
+            session_factory,
+            self._record_artifact,
+        )
+        self._poller = ProviderPollingService(session_factory, self._polling, self._clock)
+        self._callbacks = ProviderCallbackService(session_factory)
+        self._completion = ProviderCompletionService(
+            session_factory,
+            storage,
+            self._artifact_receiver,
+            self._contexts,
+            self._submission,
+            ProviderSettlementService(),
+            self._record_artifact,
+            validator,
         )
 
     def _record_artifact(self, job_id, attempt_id, key, kind, *, expires_at=None):
@@ -114,18 +131,18 @@ class GenerationExecutionService(
         return self._providers.get(provider_code)
 
     async def execute(self, job_id: uuid.UUID) -> ProviderExecutionStep:
-        while context := self._load_active_attempt(job_id):
+        while context := self._contexts.load_active_attempt(job_id):
             provider = self._provider_for(context.provider_code)
             if context.status == AttemptStatus.CREATED:
-                if not self._start_submit(context):
+                if not self._submission.start_submit(context):
                     return ProviderExecutionStep(is_complete=False, poll_count=0)
-                context = self._load_active_attempt(job_id)
+                context = self._contexts.load_active_attempt(job_id)
                 if context is None:
                     return ProviderExecutionStep(is_complete=True, poll_count=0)
                 try:
-                    submitted = await provider.submit(self._submit_request(context))
+                    submitted = await provider.submit(self._submission.submit_request(context))
                 except ProviderSubmissionError as exc:
-                    action = self._fail_attempt(context, exc.failure)
+                    action = self._completion.fail_attempt(context, exc.failure)
                     if action:
                         continue
                     return ProviderExecutionStep(is_complete=True, poll_count=0)
@@ -133,13 +150,13 @@ class GenerationExecutionService(
                     submitted = None
                 if submitted is not None and submitted.disposition == SubmitDisposition.ACCEPTED:
                     if submitted.provider_job_id is None:
-                        self._record_submit_unknown(context)
+                        self._submission.record_submit_unknown(context)
                     else:
-                        self._record_submit_accepted(context, submitted.provider_job_id)
+                        self._submission.record_submit_accepted(context, submitted.provider_job_id)
                 else:
-                    self._record_submit_unknown(context)
+                    self._submission.record_submit_unknown(context)
 
-            context = self._load_active_attempt(job_id)
+            context = self._contexts.load_active_attempt(job_id)
             if context is None:
                 return ProviderExecutionStep(is_complete=True, poll_count=0)
             if context.status not in {
@@ -149,9 +166,9 @@ class GenerationExecutionService(
             }:
                 return ProviderExecutionStep(is_complete=True, poll_count=0)
 
-            reservation = self._reserve_poll(context)
+            reservation = self._poller.reserve_poll(context)
             if reservation.exhausted:
-                action = self._fail_attempt(
+                action = self._completion.fail_attempt(
                     context,
                     ProviderFailure(
                         FailureCode.QUEUE_TIMEOUT,
@@ -176,14 +193,14 @@ class GenerationExecutionService(
             try:
                 result = await provider.poll(context.provider_attempt())
             except Exception:
-                self._record_reconcile_pending(context)
+                self._submission.record_reconcile_pending(context)
                 return ProviderExecutionStep(
                     is_complete=False,
                     poll_count=reservation.poll_count,
                     retry_after=self._polling.delay_after(reservation.poll_count),
                 )
-            result = await self._with_terminal_cost(provider, context, result)
-            action = self._apply_provider_result(context, result)
+            result = await self._completion.with_terminal_cost(provider, context, result)
+            action = self._completion.apply_provider_result(context, result)
             if action == ProviderResultAction.RETRY:
                 continue
             if action == ProviderResultAction.WAIT:
@@ -205,9 +222,9 @@ class GenerationExecutionService(
         idempotency_key: str | None = None,
     ) -> None:
         context = (
-            self._load_active_attempt(job_id)
+            self._contexts.load_active_attempt(job_id)
             if attempt_id is None
-            else self._load_cancellable_attempt(job_id, attempt_id)
+            else self._contexts.load_cancellable_attempt(job_id, attempt_id)
         )
         if context is None:
             return
@@ -232,7 +249,7 @@ class GenerationExecutionService(
             provider_status=result.status.value,
         )
         if result.status == ProviderStatus.CANCELLED:
-            terminal = await self._with_terminal_cost(
+            terminal = await self._completion.with_terminal_cost(
                 provider,
                 context,
                 PollResult(
@@ -240,7 +257,7 @@ class GenerationExecutionService(
                     provider_job_id=context.provider_job_id,
                 ),
             )
-            self._apply_provider_result(context, terminal)
+            self._completion.apply_provider_result(context, terminal)
 
     async def handle_webhook(
         self,
@@ -249,20 +266,22 @@ class GenerationExecutionService(
     ) -> ProviderWebhookResult:
         provider = self._provider_for(provider_code)
         event = await provider.verify_webhook(request)
-        event_id, lock_token = self._receive_provider_event(provider_code, request.body, event)
+        event_id, lock_token = self._callbacks.receive_provider_event(
+            provider_code, request.body, event
+        )
         if lock_token is None:
-            return self._webhook_result(event_id)
+            return self._callbacks.webhook_result(event_id)
 
-        context = self._load_attempt_by_provider_job(provider_code, event.provider_job_id)
+        context = self._contexts.load_attempt_by_provider_job(provider_code, event.provider_job_id)
         if context is None:
-            self._reset_provider_event(event_id, lock_token)
-            return self._webhook_result(event_id)
+            self._callbacks.reset_provider_event(event_id, lock_token)
+            return self._callbacks.webhook_result(event_id)
 
         try:
-            result = await self._result_for_event(provider, context, event)
-            result = await self._with_terminal_cost(provider, context, result)
+            result = await self._completion.result_for_event(provider, context, event)
+            result = await self._completion.with_terminal_cost(provider, context, result)
         except Exception as exc:
-            self._reset_provider_event(event_id, lock_token)
+            self._callbacks.reset_provider_event(event_id, lock_token)
             logger.warning(
                 "provider.webhook_reconcile_failed",
                 event_id=event.event_id,
@@ -270,9 +289,9 @@ class GenerationExecutionService(
                 attempt_id=str(context.attempt_id),
                 error_type=type(exc).__name__,
             )
-            return self._webhook_result(event_id)
+            return self._callbacks.webhook_result(event_id)
 
-        self._apply_provider_result(context, result)
+        self._completion.apply_provider_result(context, result)
         if event.status in {
             ProviderStatus.SUCCEEDED,
             ProviderStatus.FAILED,
@@ -281,9 +300,9 @@ class GenerationExecutionService(
             ProviderStatus.RUNNING,
             ProviderStatus.UNKNOWN,
         }:
-            self._reset_provider_event(event_id, lock_token)
-            return self._webhook_result(event_id)
-        self._finish_provider_event(event_id, lock_token, context)
+            self._callbacks.reset_provider_event(event_id, lock_token)
+            return self._callbacks.webhook_result(event_id)
+        self._callbacks.finish_provider_event(event_id, lock_token, context)
         logger.info(
             "provider.webhook_processed",
             event_id=event.event_id,
@@ -291,7 +310,7 @@ class GenerationExecutionService(
             attempt_id=str(context.attempt_id),
             provider_status=event.status.value,
         )
-        return self._webhook_result(event_id)
+        return self._callbacks.webhook_result(event_id)
 
 
 __all__ = [
