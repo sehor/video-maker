@@ -16,6 +16,10 @@
 按用户要求，日常开发默认使用轻量测试，不自动运行数据库集成、迁移、并发压力或浏览器测试。
 外部服务使用模拟；数据库原有用例保留为手动验证，不改变业务接口和账本规则。
 
+2026-09-08 隔离优化后的完整 Python 回归：**444 passed、1 deselected，187.44s，单次通过**。
+原 1640.65s 运行包含清理超时；最终单次数据重置最大 1.85s，未再出现超时。
+见 [TEST-01 实现、分阶段计时与验收](plans/issues/TEST-01.md)。
+
 ## 执行入口
 
 | 命令 | 验证范围 | 依赖 |
@@ -45,11 +49,19 @@
 - 只读取 `.env` 或 shell 的 `TEST_DATABASE_URL`，必须是 loopback PostgreSQL、库名以 `_test` 结尾，
   且不能与开发库同名。禁止通过 query 参数覆盖连接目标。缺配置失败，不回退 SQLite。
 - 本机复用已有 Windows PostgreSQL；不自动安装、启动、创建或删除本机数据库。
-- 每次运行创建随机 `test_<uuid>` schema。普通集成测试执行一次 Alembic 到 head，
-  测试间只 TRUNCATE 本次 schema 的数据，保留真实事务提交、多个连接、触发器及行锁。
+- 每次运行创建随机 `test_<uuid>` schema，业务集成测试只执行一次 Alembic 到 head。
+  已审核的顺序单连接测试标记 `db_rollback`：SessionLocal 绑定一个外层事务，业务 commit
+  释放保存点，测试结束回滚全部记录；连续此类测试不清表。不用于并发、恢复、延迟约束
+  在真实 commit 时触发的验收，也不能绕过 SessionLocal 使用额外连接。
+- 普通 `database` 测试默认保持真实提交、多连接、触发器与行锁；其后才按需重置测试数据。
+  普通表按外键顺序 DELETE，保留表文件。只有非空的不可删除 `ledger_postings` 和有循环
+  外键的 `generation_jobs` 使用 TRUNCATE CASCADE 清理其依赖；不再整库清表或重置序列。
+  不关闭触发器、不删约束；保留路线版本种子并恢复 route_admission。新 schema 无需先清表。
+  重置使用正常 30s 语句上限和 5s 锁等待上限，不再单独延长至 120s。
   测试连接单独设置 `synchronous_commit=off`，避免每次写入等待磁盘同步；不修改实例配置。
   这不验证数据库断电恢复能力，提交可见性、延迟约束和事务原子性仍由 PostgreSQL 实际执行。
-- 迁移升级/降级和 E2E 各用新的 schema；清理只针对本次成功创建的 schema。
+- 迁移升级/降级和 E2E 各用新的 schema；迁移测试不再创建或清理无关的业务测试 schema。
+  清理只针对本次成功创建的 schema。
   不删除 public、其他 schema、既有表或用户数据。
 - 不支持在同一 pytest 进程内用 xdist 共享 fixture；独立进程可以使用同一测试库的不同 schema。
 
@@ -75,6 +87,8 @@
 - 账本数据库测试必须验证不可修改、延迟平衡约束和失败回滚，不能只检查触发器名称。
 - 并发测试使用起跑屏障、独立请求和真实 PostgreSQL 锁，不通过循环重跑把偶发通过当验收。
 - `.test-runs/<group>-*/` 保留本轮 JUnit、临时文件和服务器日志；浏览器保留失败 trace。
+  `python-phases.json` 分别记录每项的 setup/call/teardown 耗时、隔离方式、数据重置秒数
+  与 TRUNCATE 根表；准备阶段的等待不再与业务执行时间混为一谈。
   自动清理数据库 schema 和受管服务，运行产物忽略提交；不扫描或删除其他旧目录。
 - CI 的 PR/push 默认只跑轻量测试和静态检查；手动运行时勾选 `full_integration` 才创建临时数据库并执行完整数据库/E2E。远程 CI 需要推送后实际执行，
   本机通过不能代替远程 CI 运行结果。

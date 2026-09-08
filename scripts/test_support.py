@@ -82,3 +82,44 @@ def migrate(url: URL, revision: str = "head"):
     finally:
         settings.database_url = original
     return config
+
+
+@contextmanager
+def rollback_sessions(factory, engine):
+    """Sequential tests only: Session.commit releases a savepoint, not the outer transaction.
+
+    Do not use for concurrency, deferred-constraint-at-commit or recovery tests.
+    Existing imports retain the same sessionmaker object.
+    """
+    original = factory.kw.copy()
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        factory.configure(bind=connection, join_transaction_mode="create_savepoint")
+        try:
+            yield connection
+        finally:
+            factory.kw.clear()
+            factory.kw.update(original)
+            transaction.rollback()
+
+
+def reset_committed_data(connection, metadata):
+    """Clear test rows while preserving triggers and avoiding whole-schema TRUNCATE.
+
+    Immutable ledger postings cannot be deleted. Jobs and their final outputs
+    form a foreign-key cycle. Only these populated roots need TRUNCATE; CASCADE
+    follows their actual dependent tables, never their parents.
+    """
+    roots = [name for name in ("ledger_postings", "generation_jobs")
+             if connection.scalar(text(f'SELECT EXISTS (SELECT 1 FROM "{name}")'))]
+    if roots:
+        names = ", ".join(f'"{name}"' for name in roots)
+        connection.execute(text(f"TRUNCATE {names} CASCADE"))
+    for table in reversed(metadata.sorted_tables):
+        if table.name not in {"generation_route_versions", "ledger_postings"}:
+            connection.execute(table.delete())
+    connection.execute(text(
+        "INSERT INTO route_admission (candidate_id) "
+        "SELECT candidate_id FROM generation_route_versions"
+    ))
+    return roots

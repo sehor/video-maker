@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -8,7 +9,13 @@ import pytest
 from fastapi import Header
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-from test_support import isolated_schema, migrate, test_database_url
+from test_support import (
+    isolated_schema,
+    migrate,
+    reset_committed_data,
+    rollback_sessions,
+    test_database_url,
+)
 
 test_runtime_root = Path(
     os.environ.get("TEST_RUNTIME_ROOT") or tempfile.mkdtemp(prefix="video-tests-")
@@ -32,7 +39,7 @@ from app import bootstrap as public_api  # noqa: E402
 from app import main  # noqa: E402
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.db import engine  # noqa: E402
+from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.generation_options import (  # noqa: E402
     InternalGenerationOptions,
     get_internal_generation_options,
@@ -76,26 +83,42 @@ def database_engine():
 
 
 @pytest.fixture
-def clean_database(database_engine):
-    # Retain real commits and separate connections so races/locks are tested honestly.
-    # DDL/migrations run once, data alone is reset between tests.
+def clean_database(database_engine, database_reset_state, request):
+    # A new schema and rollback-only tests are already clean. Reset only after a
+    # real-commit test; retain immutable ledger triggers and independent connections.
+    started = time.perf_counter()
+    if not database_reset_state["dirty"]:
+        request.node.user_properties.append(("db_reset_seconds", 0.0))
+        return
     with database_engine.begin() as connection:
-        # TRUNCATE recreates many files on Windows. Allow bounded disk sync time
-        # only for fixture cleanup, while retaining a short lock-wait limit.
+        # Cleanup retains the normal 30s statement bound and all DB protections.
         connection.execute(text("SET LOCAL lock_timeout = '5s'"))
-        connection.execute(text("SET LOCAL statement_timeout = '120s'"))
-        tables = connection.scalars(text(
-            "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() "
-            "AND tablename NOT IN ('alembic_version', 'generation_route_versions')"
-        )).all()
-        if tables:
-            names = ", ".join(f'"{name}"' for name in tables)
-            connection.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
-            connection.execute(text(
-                "INSERT INTO route_admission (candidate_id) "
-                "SELECT candidate_id FROM generation_route_versions"
-            ))
-    yield
+        roots = reset_committed_data(connection, Base.metadata)
+    database_reset_state["dirty"] = False
+    request.node.user_properties.append(("db_reset_seconds", time.perf_counter() - started))
+    request.node.user_properties.append(("db_truncate_roots", ",".join(roots)))
+
+
+@pytest.fixture(scope="session")
+def database_reset_state():
+    return {"dirty": False}
+
+
+@pytest.fixture
+def database_isolation(clean_database, database_engine, database_reset_state, request, monkeypatch):
+    if request.node.get_closest_marker("db_rollback"):
+        request.node.user_properties.append(("db_isolation", "rollback"))
+        with rollback_sessions(SessionLocal, database_engine):
+            def unexpected_connection(*args, **kwargs):
+                pytest.fail("db_rollback tests must use sequential SessionLocal sessions")
+            with monkeypatch.context() as patch:
+                patch.setattr(engine, "connect", unexpected_connection)
+                yield
+    else:
+        request.node.user_properties.append(("db_isolation", "committed"))
+        # Mark before execution so failed tests are also cleaned before the next one.
+        database_reset_state["dirty"] = True
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -104,10 +127,13 @@ def isolated_settings(tmp_path, monkeypatch, request):
     original = settings.model_copy(deep=True)
     monkeypatch.setattr(settings, "storage_root", tmp_path / "storage")
     if request.node.get_closest_marker("database"):
-        request.getfixturevalue("clean_database")
-        monkeypatch.setattr(
-            settings, "database_url", engine.url.render_as_string(hide_password=False)
-        )
+        if "migration_database" in request.fixturenames:
+            request.node.user_properties.append(("db_isolation", "migration"))
+        else:
+            request.getfixturevalue("database_isolation")
+            monkeypatch.setattr(
+                settings, "database_url", engine.url.render_as_string(hide_password=False)
+            )
     else:
         def unexpected_connection(*args, **kwargs):
             pytest.fail("Database access requires @pytest.mark.database")

@@ -262,4 +262,4 @@ def test_shot_stores_specs_while_assets_and_references_have_separate_lifecycles(
     assert GenerationOutput.__table__.name == "generation_outputs"
 
 
-pytestmark = pytest.mark.database
+pytestmark = [pytest.mark.database, pytest.mark.db_rollback]

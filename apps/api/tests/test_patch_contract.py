@@ -3,7 +3,7 @@ import pytest
 from app.schemas import ProjectUpdate, ShotUpdate
 from tests.test_provider_routing import _quoted_shot
 
-pytestmark = pytest.mark.database
+pytestmark = [pytest.mark.database, pytest.mark.db_rollback]
 
 
 @pytest.mark.parametrize("field", ["name", "title", "prompt", "duration_seconds", "aspect_ratio"])

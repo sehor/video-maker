@@ -61,4 +61,4 @@ def test_error_has_machine_code_and_request_id(client: TestClient) -> None:
     assert body["request_id"]
 
 
-pytestmark = pytest.mark.database
+pytestmark = [pytest.mark.database, pytest.mark.db_rollback]

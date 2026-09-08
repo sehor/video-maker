@@ -353,8 +353,20 @@ class LocalObjectStorage(ClaimingObjectStorage):
 
     def _path_for(self, key: str) -> Path:
         path = (self.root / _valid_object_key(key)).resolve()
-        if self.root not in path.parents:
+        # Windows resolve() can retain an extended prefix if a missing parent
+        # appears during resolution. Compare equivalent resolved spellings;
+        # keep the original path for IO and still reject resolved symlink escapes.
+        if self._comparison_path(self.root) not in self._comparison_path(path).parents:
             raise ApiError(400, "STORAGE_KEY_INVALID", "无效的存储对象")
+        return path
+
+    @staticmethod
+    def _comparison_path(path: Path) -> Path:
+        if path.drive.startswith("\\\\?\\"):
+            value = str(path)
+            if path.drive.startswith("\\\\?\\UNC\\"):
+                return Path("\\\\" + value[8:])
+            return Path(value[4:])
         return path
 
     def _put_stream(self, key: str, content: BinaryIO, mime_type: str) -> None:

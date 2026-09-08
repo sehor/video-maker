@@ -25,6 +25,34 @@ CLAIM_SECRET = b"contract-test-storage-claim-secret-32-bytes"
 PNG = b"\x89PNG\r\n\x1a\ncontract-content"
 
 
+@pytest.mark.windows
+@pytest.mark.parametrize("outside", [False, True])
+def test_windows_resolved_prefix_preserves_storage_boundary(tmp_path, monkeypatch, outside):
+    store = LocalObjectStorage(tmp_path / "store", CLAIM_SECRET)
+    claim = store.write_claim("assets", mime_type="image/png", max_bytes=100)
+    original_resolve = Path.resolve
+
+    def resolve_with_prefix(path, *args, **kwargs):
+        resolved = original_resolve(path, *args, **kwargs)
+        if path.name == Path(claim.object_key).name:
+            # CPython may retain the extended prefix when a parent directory is
+            # created between its two GetFinalPathName calls (error 3 becomes 2).
+            if outside:
+                resolved = tmp_path / "outside.png"
+            return Path("\\\\?\\" + str(resolved))
+        return resolved
+
+    monkeypatch.setattr(Path, "resolve", resolve_with_prefix)
+    if outside:
+        with pytest.raises(ApiError) as failure:
+            store.put(claim, PNG, "image/png")
+        assert failure.value.code == "STORAGE_KEY_INVALID"
+        assert not (tmp_path / "outside.png").exists()
+    else:
+        stored = store.put(claim, PNG, "image/png")
+        assert store.stat(stored.key).size_bytes == len(PNG)
+
+
 class MutableClock:
     def __init__(self) -> None:
         self.now = datetime(2026, 8, 26, tzinfo=UTC)

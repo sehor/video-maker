@@ -1,11 +1,27 @@
 """Repository-wide collection and external-operation policy."""
 
+import json
 import os
 import re
 import socket
 import subprocess
+from pathlib import Path
 
 import pytest
+
+PHASE_TIMES = pytest.StashKey[list[dict]]()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = (yield).get_result()
+    item.config.stash.setdefault(PHASE_TIMES, []).append({
+        "nodeid": report.nodeid,
+        "phase": report.when,
+        "seconds": report.duration,
+        "outcome": report.outcome,
+        "database": dict(report.user_properties),
+    })
 
 
 def pytest_addoption(parser):
@@ -56,6 +72,11 @@ def external_operations(monkeypatch, request):
 
 
 def pytest_sessionfinish(session, exitstatus):
+    runtime = os.environ.get("TEST_RUNTIME_ROOT")
+    if runtime:
+        target = Path(runtime).parent / "python-phases.json"
+        target.write_text(json.dumps(session.config.stash.get(PHASE_TIMES, []), indent=2),
+                          encoding="utf-8")
     # Explicit skips/xfails are not proof. Platform/live exclusions happen at collection.
     reporter = session.config.pluginmanager.getplugin("terminalreporter")
     if reporter and any(reporter.stats.get(key) for key in ("skipped", "xfailed", "xpassed")):
