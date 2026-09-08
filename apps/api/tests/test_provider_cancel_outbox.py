@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-import app.public_api as public_api_module
+import app.bootstrap as public_api_module
 from app.db import SessionLocal
 from app.models import (
     GenerationAttempt,

@@ -14,7 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app import main, public_api
+from app import bootstrap as public_api
+from app import main
 from app.config import Settings, get_settings
 from app.db import SessionLocal, engine
 from app.hatchet_workflows import create_hatchet_workflows

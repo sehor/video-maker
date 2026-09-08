@@ -28,7 +28,8 @@ os.environ["MOCK_PROVIDER_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["STORAGE_CLAIM_SECRET"] = "test-storage-claim-secret-at-least-32-bytes"
 os.environ["ADMIN_AUTH_SUBJECTS"] = "admin-user"
 
-from app import main, public_api  # noqa: E402
+from app import bootstrap as public_api  # noqa: E402
+from app import main  # noqa: E402
 from app.auth import Identity, get_identity  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db import engine  # noqa: E402
@@ -163,3 +164,4 @@ def client(raw_client: TestClient) -> TestClient:
 
     raw_client.post = post_and_dispatch  # type: ignore[method-assign]
     return raw_client
+

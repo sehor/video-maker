@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request
 
+from app.bootstrap import provider_executor
 from app.config import get_settings
 from app.errors import ApiError
 from app.provider import WebhookVerificationError, WebhookVerificationRequest
@@ -28,9 +29,6 @@ async def receive_provider_webhook(
         parts.append(chunk)
     body = b"".join(parts)
 
-    # Resolve through the compatibility facade so existing internal monkeypatches
-    # and call sites keep their contract after the physical route split.
-    from app.api import provider_executor
 
     executor = provider_executor(provider_code, require_webhook_secret=True)
     try:

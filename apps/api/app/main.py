@@ -13,12 +13,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import (
+from app.api import router
+from app.bootstrap import (
     dispatch_generation_outbox,
     dispatch_provider_cancel_outbox,
     dispatch_storage_cleanup_outbox,
     reconcile_generation_job,
-    router,
+    storage,
+    workflow_starter,
 )
 from app.config import get_settings
 from app.control_plane import ControlPlaneReconciler, ReadinessService
@@ -26,7 +28,6 @@ from app.db import SessionLocal
 from app.errors import ApiError
 from app.local_workflow import LocalWorkflowStarter
 from app.outbox import DispatchResult
-from app.public_api import storage, workflow_starter
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 structlog.configure(
