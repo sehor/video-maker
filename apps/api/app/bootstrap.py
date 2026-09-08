@@ -4,6 +4,7 @@ import uuid
 from datetime import timedelta
 
 from app.artifact_lifecycle import ArtifactCleanupDispatcher
+from app.blocking_io import run_blocking
 from app.config import get_settings
 from app.db import SessionLocal
 from app.errors import ApiError, not_found
@@ -59,7 +60,7 @@ async def dispatch_generation_outbox() -> DispatchResult:
 
 
 async def execute_provider_cancel(request: ProviderCancelRequest) -> None:
-    await provider_executor(request.provider_code).request_cancel(
+    await (await run_blocking(provider_executor, request.provider_code)).request_cancel(
         request.job_id, request.attempt_id, request.idempotency_key
     )
 
@@ -71,11 +72,13 @@ async def dispatch_provider_cancel_outbox() -> DispatchResult:
 
 
 async def dispatch_storage_cleanup_outbox() -> DispatchResult:
-    artifact_result = await ArtifactCleanupDispatcher(SessionLocal, storage()).dispatch_once()
+    artifact_result = await ArtifactCleanupDispatcher(
+        SessionLocal, (await run_blocking(storage))
+    ).dispatch_once()
     if artifact_result != DispatchResult.IDLE:
         return artifact_result
     return await StorageCleanupDispatcher(
-        SessionLocal, storage(), max_attempts=get_settings().outbox_max_attempts
+        SessionLocal, (await run_blocking(storage)), max_attempts=get_settings().outbox_max_attempts
     ).dispatch_once()
 
 
@@ -84,4 +87,4 @@ async def reconcile_generation_job(job_id: uuid.UUID) -> object:
         return await workflow_starter.start(
             WorkflowStartRequest(job_id, generation_workflow_key(job_id), {"job_id": str(job_id)})
         )
-    return await GenerationExecutionService(storage()).execute(job_id)
+    return await (await run_blocking(lambda: GenerationExecutionService(storage()))).execute(job_id)

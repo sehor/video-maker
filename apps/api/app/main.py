@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import router
+from app.blocking_io import run_blocking
 from app.bootstrap import (
     dispatch_generation_outbox,
     dispatch_provider_cancel_outbox,
@@ -113,9 +114,7 @@ async def control_plane_reconciler_loop(stop: asyncio.Event) -> None:
     logger.info("control_plane.reconciler_started")
     while not stop.is_set():
         try:
-            await asyncio.wait_for(
-                stop.wait(), timeout=settings.reconciler_interval_seconds
-            )
+            await asyncio.wait_for(stop.wait(), timeout=settings.reconciler_interval_seconds)
         except TimeoutError:
             try:
                 await reconciler.reconcile_once()
@@ -136,7 +135,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if local_runner is not None:
             await local_runner.startup()
         if settings.outbox_dispatcher_enabled or settings.reconciler_enabled:
-            if not workflow_starter.ready():
+            if not (await run_blocking(workflow_starter.ready)):
                 raise RuntimeError(f"WORKFLOW_BACKEND={settings.workflow_backend} is not ready")
         if settings.outbox_dispatcher_enabled:
             tasks.extend(

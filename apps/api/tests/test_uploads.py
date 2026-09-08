@@ -1,9 +1,44 @@
 import io
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
+from app import assets_api, bootstrap
+from app.db import SessionLocal
+from app.models import Project, ProjectAsset
+from app.project_cleanup import request_project_deletion
 from tests.test_projects_permissions import create_project
+
+
+def test_upload_rechecks_project_after_file_io_and_cleans_rejected_write(raw_client, monkeypatch):
+    project = create_project(raw_client)
+    store = bootstrap.storage()
+    put = store.put
+    written = []
+
+    def delete_project_during_transfer(claim, content, mime_type):
+        # This independent transaction could not commit if upload held the row lock.
+        with SessionLocal() as db:
+            row = db.get(Project, uuid.UUID(project["id"]))
+            request_project_deletion(db, row)
+            db.commit()
+        result = put(claim, content, mime_type)
+        written.append(result.key)
+        return result
+
+    monkeypatch.setattr(store, "put", delete_project_during_transfer)
+    monkeypatch.setattr(assets_api, "storage", lambda: store)
+    response = raw_client.post(
+        f"/v1/projects/{project['id']}/assets",
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\nfixture", "image/png")},
+    )
+    assert response.status_code == 404
+    assert written
+    assert not store._path_for(written[0]).exists()
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(ProjectAsset)) == 0
 
 
 def test_upload_and_private_download(client: TestClient) -> None:

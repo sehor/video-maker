@@ -9,6 +9,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.artifact_lifecycle import cleanup_due
+from app.blocking_io import run_blocking
 from app.dead_letters import add_dead_letter
 from app.errors import ApiError
 from app.models import (
@@ -153,6 +154,9 @@ class StorageCleanupDispatcher:
             raise ValueError("storage cleanup max attempts must be positive")
 
     async def dispatch_once(self) -> DispatchResult:
+        return await run_blocking(self._dispatch_once)
+
+    def _dispatch_once(self) -> DispatchResult:
         event = self._claim_one()
         if event is None:
             return DispatchResult.IDLE

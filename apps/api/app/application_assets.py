@@ -1,7 +1,8 @@
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
+from typing import BinaryIO
 
-from fastapi import UploadFile
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.models import (
 )
 from app.schemas import (
     ProjectAssetList,
+    ProjectAssetOut,
 )
 from app.storage import ObjectStorage, validate_media_header
 
@@ -55,18 +57,22 @@ def list_project_assets(
     return ProjectAssetList(items=items[:limit], next_cursor=next_cursor)
 
 
-async def save_asset(
+def save_asset(
     project_id: uuid.UUID,
-    file: UploadFile,
-    user: AppUser,
-    db: Session,
+    content: BinaryIO,
+    user_id: uuid.UUID,
+    filename: str | None,
+    mime_type: str,
     *,
-    store: ObjectStorage,
+    session_factory: Callable[[], Session],
+    storage_factory: Callable[[], ObjectStorage],
     claim_ttl: timedelta,
-) -> ProjectAsset:
-    owned_project(db, project_id, user.id, for_update=True)
-    mime_type = file.content_type or "application/octet-stream"
-    first = await file.read(16)
+) -> ProjectAssetOut:
+    # Each worker owns its sessions. No business transaction spans file transfer.
+    with session_factory() as db:
+        owned_project(db, project_id, user_id)
+    store = storage_factory()
+    first = content.read(16)
     validate_media_header(mime_type, first)
     claim = store.write_claim(
         "assets",
@@ -74,26 +80,29 @@ async def save_asset(
         max_bytes=get_settings().max_upload_bytes,
         expires_in=claim_ttl,
     )
-    await file.seek(0)
-    stored = store.put(claim, file.file, mime_type)
-    asset = ProjectAsset(
-        project_id=project_id,
-        owner_id=user.id,
-        object_key=stored.key,
-        original_filename=(file.filename or "upload")[:255],
-        media_type=stored.mime_type,
-        size_bytes=stored.size_bytes,
-        sha256=stored.sha256,
-        status=ProjectAssetStatus.READY,
-    )
-    db.add(asset)
+    content.seek(0)
+    stored = store.put(claim, content, mime_type)
     try:
-        db.commit()
+        with session_factory() as db:
+            # A project may have been deleted while bytes were being copied.
+            owned_project(db, project_id, user_id, for_update=True)
+            asset = ProjectAsset(
+                project_id=project_id,
+                owner_id=user_id,
+                object_key=stored.key,
+                original_filename=(filename or "upload")[:255],
+                media_type=stored.mime_type,
+                size_bytes=stored.size_bytes,
+                sha256=stored.sha256,
+                status=ProjectAssetStatus.READY,
+            )
+            db.add(asset)
+            db.commit()
+            db.refresh(asset)
+            return ProjectAssetOut.model_validate(asset)
     except Exception:
         store.delete(stored.key)
         raise
-    db.refresh(asset)
-    return asset
 
 
 def download_asset(asset_id: uuid.UUID, user: AppUser, db: Session) -> ProjectAsset:

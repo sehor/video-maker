@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, exists, func, or_, select, update
 
+from app.blocking_io import run_blocking
 from app.config import get_settings
 from app.errors import ApiError
 from app.models import (
@@ -118,6 +119,9 @@ class ArtifactCleanupDispatcher:
         self.lease, self.max_attempts = lease, max_attempts
 
     async def dispatch_once(self):
+        return await run_blocking(self._dispatch_once)
+
+    def _dispatch_once(self):
         now = self.clock()
         with self.sessions() as db:
             referenced = exists().where(GenerationOutput.object_key == ProviderArtifact.object_key)

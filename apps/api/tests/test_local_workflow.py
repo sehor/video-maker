@@ -79,7 +79,12 @@ def test_independent_jobs_can_run_while_another_is_waiting() -> None:
         await runner.startup()
         try:
             results = await asyncio.gather(*(runner.start(item) for item in items))
-            await asyncio.sleep(0)
+            async def both_entered():
+                while len(executor.calls) < len(items):
+                    await asyncio.sleep(0.001)
+
+            await asyncio.wait_for(both_entered(), timeout=1)
+            assert not executor.release.is_set()
             assert set(executor.calls) == {item.job_id for item in items}
             assert len({result.workflow_id for result in results}) == 2
             executor.release.set()

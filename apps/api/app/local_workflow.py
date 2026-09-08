@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
+from app.blocking_io import run_blocking
 from app.config import Settings
 from app.workflow import GenerationWorkflowInput, WorkflowStartRequest, WorkflowStartResult
 
@@ -102,7 +103,7 @@ class LocalWorkflowStarter:
         return WorkflowStartResult(workflow_id)
 
     async def _execute(self, job_id: uuid.UUID) -> None:
-        executor = self._executor_factory()
+        executor = await run_blocking(self._executor_factory)
         while True:
             step = await executor.execute(job_id)
             if step.is_complete:

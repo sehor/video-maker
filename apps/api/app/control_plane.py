@@ -7,6 +7,7 @@ import structlog
 from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
+from app.blocking_io import run_blocking
 from app.models import (
     AttemptStatus,
     DeadLetterEvent,
@@ -71,8 +72,8 @@ class ControlPlaneReconciler:
 
     async def reconcile_once(self) -> ReconcileResult:
         dispatch_results = tuple([await dispatch() for dispatch in self.dispatchers])
-        released = self._release_expired_provider_leases()
-        job_ids = self._stuck_job_ids()
+        released = await run_blocking(self._release_expired_provider_leases)
+        job_ids = await run_blocking(self._stuck_job_ids)
         reconciled = 0
         for job_id in job_ids:
             try:
@@ -143,17 +144,17 @@ def operational_metrics(
     now = clock()
     pending_outbox = (
         db.scalar(
-            select(func.count()).select_from(OutboxEvent).where(
-                OutboxEvent.status.in_([OutboxStatus.PENDING, OutboxStatus.PROCESSING])
-            )
+            select(func.count())
+            .select_from(OutboxEvent)
+            .where(OutboxEvent.status.in_([OutboxStatus.PENDING, OutboxStatus.PROCESSING]))
         )
         or 0
     )
     pending_cleanup = (
         db.scalar(
-            select(func.count()).select_from(StorageCleanupEvent).where(
-                StorageCleanupEvent.status.in_([OutboxStatus.PENDING, OutboxStatus.PROCESSING])
-            )
+            select(func.count())
+            .select_from(StorageCleanupEvent)
+            .where(StorageCleanupEvent.status.in_([OutboxStatus.PENDING, OutboxStatus.PROCESSING]))
         )
         or 0
     )
@@ -176,15 +177,17 @@ def operational_metrics(
     )
     dead_letters = (
         db.scalar(
-            select(func.count()).select_from(DeadLetterEvent).where(
-                DeadLetterEvent.status == DeadLetterStatus.OPEN
-            )
+            select(func.count())
+            .select_from(DeadLetterEvent)
+            .where(DeadLetterEvent.status == DeadLetterStatus.OPEN)
         )
         or 0
     )
     stuck_jobs = (
         db.scalar(
-            select(func.count()).select_from(GenerationJob).where(
+            select(func.count())
+            .select_from(GenerationJob)
+            .where(
                 GenerationJob.status.in_(ACTIVE_JOB_STATUSES),
                 GenerationJob.updated_at <= now - stuck_after,
             )

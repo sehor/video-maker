@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.blocking_io import run_blocking
 from app.dead_letters import add_dead_letter
 from app.models import DeadLetterSource, GenerationJob, OutboxEvent, OutboxStatus
 from app.workflow import WorkflowStarter, WorkflowStartRequest
@@ -71,10 +72,10 @@ class OutboxDispatcher:
             raise ValueError("outbox max attempts must be positive")
 
     async def dispatch_once(self) -> DispatchResult:
-        event = self._claim_one()
+        event = await run_blocking(self._claim_one)
         if event is None:
             return DispatchResult.IDLE
-        self.after_claim(event)
+        (await run_blocking(self.after_claim, event))
         try:
             result = await self.starter.start(
                 WorkflowStartRequest(
@@ -84,9 +85,9 @@ class OutboxDispatcher:
                 )
             )
         except Exception as exc:
-            return self._schedule_retry(event, exc)
-        self.after_start(event)
-        self._mark_published(event, result.workflow_id)
+            return await run_blocking(self._schedule_retry, event, exc)
+        (await run_blocking(self.after_start, event))
+        (await run_blocking(self._mark_published, event, result.workflow_id))
         return DispatchResult.PUBLISHED
 
     def after_claim(self, event: ClaimedOutboxEvent) -> None:

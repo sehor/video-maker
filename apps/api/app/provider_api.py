@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request
 
+from app.blocking_io import run_blocking
 from app.bootstrap import provider_executor
 from app.config import get_settings
 from app.errors import ApiError
@@ -29,8 +30,7 @@ async def receive_provider_webhook(
         parts.append(chunk)
     body = b"".join(parts)
 
-
-    executor = provider_executor(provider_code, require_webhook_secret=True)
+    executor = await run_blocking(provider_executor, provider_code, require_webhook_secret=True)
     try:
         result = await executor.handle_webhook(
             provider_code,

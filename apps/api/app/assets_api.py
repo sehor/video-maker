@@ -6,11 +6,10 @@ from fastapi.responses import Response
 
 from app import application_assets as use_cases
 from app.auth import CurrentUser
+from app.blocking_io import run_blocking
 from app.bootstrap import storage, storage_claim_ttl
+from app.db import SessionLocal
 from app.http_dependencies import Db, storage_response
-from app.models import (
-    ProjectAsset,
-)
 from app.schemas import (
     ProjectAssetList,
     ProjectAssetOut,
@@ -35,19 +34,34 @@ async def upload_asset(
     project_id: Annotated[uuid.UUID, Form()],
     file: Annotated[UploadFile, File()],
     user: CurrentUser,
-    db: Db,
-) -> ProjectAsset:
-    return await use_cases.save_asset(
-        project_id, file, user, db, store=storage(), claim_ttl=storage_claim_ttl()
+) -> ProjectAssetOut:
+    return await run_blocking(
+        use_cases.save_asset,
+        project_id,
+        file.file,
+        user.id,
+        file.filename,
+        file.content_type or "application/octet-stream",
+        session_factory=SessionLocal,
+        storage_factory=storage,
+        claim_ttl=storage_claim_ttl(),
     )
 
 
 @router.post("/projects/{project_id}/assets", response_model=ProjectAssetOut, status_code=201)
 async def upload_project_asset(
     project_id: uuid.UUID, file: Annotated[UploadFile, File()], user: CurrentUser, db: Db
-) -> ProjectAsset:
-    return await use_cases.save_asset(
-        project_id, file, user, db, store=storage(), claim_ttl=storage_claim_ttl()
+) -> ProjectAssetOut:
+    return await run_blocking(
+        use_cases.save_asset,
+        project_id,
+        file.file,
+        user.id,
+        file.filename,
+        file.content_type or "application/octet-stream",
+        session_factory=SessionLocal,
+        storage_factory=storage,
+        claim_ttl=storage_claim_ttl(),
     )
 
 

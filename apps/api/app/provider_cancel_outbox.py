@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.blocking_io import run_blocking
 from app.dead_letters import add_dead_letter
 from app.models import (
     DeadLetterSource,
@@ -98,11 +99,11 @@ class ProviderCancelDispatcher:
             raise ValueError("provider cancel max attempts must be positive")
 
     async def dispatch_once(self) -> DispatchResult:
-        event = self._claim_one()
+        event = await run_blocking(self._claim_one)
         if event is None:
             return DispatchResult.IDLE
-        self.after_claim(event)
-        self._renew_lease(event)
+        (await run_blocking(self.after_claim, event))
+        (await run_blocking(self._renew_lease, event))
         stop_renewal = asyncio.Event()
         renewal = asyncio.create_task(self._renew_while_processing(event, stop_renewal))
         error: Exception | None = None
@@ -114,9 +115,9 @@ class ProviderCancelDispatcher:
             stop_renewal.set()
             await renewal
         if error is not None:
-            return self._schedule_retry(event, error)
-        self.after_cancel(event)
-        self._mark_published(event)
+            return await run_blocking(self._schedule_retry, event, error)
+        (await run_blocking(self.after_cancel, event))
+        (await run_blocking(self._mark_published, event))
         return DispatchResult.PUBLISHED
 
     def after_claim(self, event: ClaimedProviderCancelEvent) -> None:
@@ -220,11 +221,9 @@ class ProviderCancelDispatcher:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=self.lease_renew_interval_seconds)
             except TimeoutError:
-                self._renew_lease(event)
+                (await run_blocking(self._renew_lease, event))
 
-    def _schedule_retry(
-        self, event: ClaimedProviderCancelEvent, exc: Exception
-    ) -> DispatchResult:
+    def _schedule_retry(self, event: ClaimedProviderCancelEvent, exc: Exception) -> DispatchResult:
         now = self.clock()
         error = f"{type(exc).__name__}: {exc}"[:2000]
         with self.session_factory() as db:
