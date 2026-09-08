@@ -1,6 +1,7 @@
-import type { paths } from '@video-factory/api-client'
+import type { paths as PublicPaths, developmentPaths } from '@video-factory/api-client'
 import { ApiRequestError } from './api-error'
 
+type paths = PublicPaths & developmentPaths
 type Path = keyof paths
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 type Methods<P extends Path> = {
@@ -62,7 +63,7 @@ export function createApiClient(base: string, accessToken: () => Promise<string>
       throw new ApiRequestError('网络中断，请恢复原请求', 0, undefined, undefined, method !== 'GET')
     }
     if (!response.ok) {
-      const value = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string; request_id?: string } }
+      const value = (await response.json().catch(() => ({})) ?? {}) as { error?: { code?: string; message?: string; request_id?: string } }
       throw new ApiRequestError(value.error?.message || `请求失败 (${response.status})`, response.status,
         value.error?.code, value.error?.request_id ?? response.headers.get('x-request-id') ?? undefined,
         method !== 'GET' && (response.status >= 500 || response.status === 408))
@@ -78,7 +79,7 @@ export function createApiClient(base: string, accessToken: () => Promise<string>
     const response = await send(path, options)
     if (response.status === 204) return undefined
     try { return await response.json() } catch {
-      throw new ApiRequestError('响应中断，请恢复原请求', response.status, undefined,
+      throw new ApiRequestError('响应中断，请恢复原请求', response.status, 'RESPONSE_INVALID',
         response.headers.get('x-request-id') ?? undefined, options.method !== undefined && options.method !== 'GET')
     }
   }

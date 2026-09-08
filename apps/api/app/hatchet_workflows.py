@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from app.blocking_io import run_blocking
 from app.config import Settings
 from app.workflow import (
     GenerationWorkflowInput,
@@ -95,7 +96,8 @@ def create_hatchet_workflows(settings: Settings) -> HatchetWorkflows:
             job_id=str(input.job_id),
             child_kind="provider_step",
         )
-        store = LocalObjectStorage(
+        store = await run_blocking(
+            LocalObjectStorage,
             settings.storage_root,
             settings.storage_claim_secret.get_secret_value().encode(),
         )

@@ -10,7 +10,7 @@
     "test:e2e": "pnpm --dir ../.. test:e2e",
     "test:e2e:browser": "playwright test",
     "auth:migrate": "better-auth migrate --config server/utils/auth.ts --yes",
-    "generate:client": "openapi-typescript ../../packages/api-client/openapi.json -o ../../packages/api-client/src/schema.d.ts"
+    "generate:client": "pnpm --filter @video-factory/api-client generate"
   },
   "dependencies": {
     "@nuxt/ui": "^4.0.1",

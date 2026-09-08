@@ -105,31 +105,37 @@ def save_asset(
         raise
 
 
-def download_asset(asset_id: uuid.UUID, user: AppUser, db: Session) -> ProjectAsset:
-    asset = db.scalar(
-        select(ProjectAsset).where(
-            ProjectAsset.id == asset_id,
-            ProjectAsset.owner_id == user.id,
-            ProjectAsset.status == ProjectAssetStatus.READY,
+def download_asset(
+    asset_id: uuid.UUID, user_id: uuid.UUID, session_factory: Callable[[], Session]
+) -> tuple[str, str]:
+    with session_factory() as db:
+        asset = db.scalar(
+            select(ProjectAsset).where(
+                ProjectAsset.id == asset_id,
+                ProjectAsset.owner_id == user_id,
+                ProjectAsset.status == ProjectAssetStatus.READY,
+            )
         )
-    )
-    if asset is None:
-        raise not_found("asset")
-    return asset
+        if asset is None:
+            raise not_found("asset")
+        return asset.object_key, asset.media_type
 
 
-def download_output(output_id: uuid.UUID, user: AppUser, db: Session) -> GenerationOutput:
-    output = db.scalar(
-        select(GenerationOutput)
-        .join(GenerationJob, GenerationOutput.job_id == GenerationJob.id)
-        .where(
-            GenerationOutput.id == output_id,
-            GenerationJob.user_id == user.id,
-            GenerationJob.final_output_id == output_id,
+def download_output(
+    output_id: uuid.UUID, user_id: uuid.UUID, session_factory: Callable[[], Session]
+) -> tuple[str, str]:
+    with session_factory() as db:
+        output = db.scalar(
+            select(GenerationOutput)
+            .join(GenerationJob, GenerationOutput.job_id == GenerationJob.id)
+            .where(
+                GenerationOutput.id == output_id,
+                GenerationJob.user_id == user_id,
+                GenerationJob.final_output_id == output_id,
+            )
         )
-    )
-    if output is None:
-        raise not_found("output")
-    if output.validation_status != OutputValidationStatus.VALID:
-        raise ApiError(422, "OUTPUT_INVALID", "该输出未通过媒体校验")
-    return output
+        if output is None:
+            raise not_found("output")
+        if output.validation_status != OutputValidationStatus.VALID:
+            raise ApiError(422, "OUTPUT_INVALID", "该输出未通过媒体校验")
+        return output.object_key, output.media_type

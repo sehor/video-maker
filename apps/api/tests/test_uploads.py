@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app import assets_api, bootstrap
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.models import Project, ProjectAsset
 from app.project_cleanup import request_project_deletion
 from tests.test_projects_permissions import create_project
@@ -17,8 +17,10 @@ def test_upload_rechecks_project_after_file_io_and_cleans_rejected_write(raw_cli
     store = bootstrap.storage()
     put = store.put
     written = []
+    idle_connections = engine.pool.checkedout()
 
     def delete_project_during_transfer(claim, content, mime_type):
+        assert engine.pool.checkedout() == idle_connections
         # This independent transaction could not commit if upload held the row lock.
         with SessionLocal() as db:
             row = db.get(Project, uuid.UUID(project["id"]))
@@ -39,6 +41,37 @@ def test_upload_rechecks_project_after_file_io_and_cleans_rejected_write(raw_cli
     assert not store._path_for(written[0]).exists()
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(ProjectAsset)) == 0
+
+
+def test_download_releases_database_connection_before_reading_file(raw_client, monkeypatch):
+    project = create_project(raw_client)
+    uploaded = raw_client.post(
+        f"/v1/projects/{project['id']}/assets",
+        files={"file": ("image.png", b"\x89PNG\r\n\x1a\nfixture", "image/png")},
+    )
+    assert uploaded.status_code == 201
+    store = bootstrap.storage()
+    original_open = store.open
+    idle_connections = engine.pool.checkedout()
+    reads = []
+
+    class CheckedStream:
+        def __init__(self, source):
+            self.source = source
+
+        def read(self, count):
+            assert engine.pool.checkedout() == idle_connections
+            reads.append(count)
+            return self.source.read(count)
+
+        def close(self):
+            self.source.close()
+
+    monkeypatch.setattr(store, "open", lambda claim: CheckedStream(original_open(claim)))
+    monkeypatch.setattr(assets_api, "storage", lambda: store)
+    response = raw_client.get(f"/v1/assets/{uploaded.json()['id']}/content")
+    assert response.status_code == 200
+    assert reads and response.content == b"\x89PNG\r\n\x1a\nfixture"
 
 
 def test_upload_and_private_download(client: TestClient) -> None:

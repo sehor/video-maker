@@ -36,3 +36,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+# Published migration formatting debt only. Do not broaden these exceptions to
+# new migrations or change historical migration logic for lint cleanup.
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/0004_job_state_api_idempotency.py" = ["I001"]
+"alembic/versions/0005_transactional_outbox.py" = ["I001"]
+"alembic/versions/0006_provider_event_inbox.py" = ["I001"]

@@ -958,68 +958,6 @@
         }
       }
     },
-    "/v1/wallet/test-grants": {
-      "post": {
-        "summary": "Create Test Grant",
-        "description": "Development-only test credit grant; production returns 404.",
-        "operationId": "create_test_grant_v1_wallet_test_grants_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Idempotency-Key"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TestGrantCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LedgerTransactionOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/wallet": {
       "get": {
         "summary": "Get Wallet",
@@ -2653,43 +2591,6 @@
         },
         "type": "object",
         "title": "ShotUpdate"
-      },
-      "TestGrantCreate": {
-        "properties": {
-          "tier": {
-            "type": "string",
-            "maxLength": 24,
-            "minLength": 1,
-            "pattern": "^[A-Z][A-Z0-9_]*$",
-            "title": "Tier"
-          },
-          "amount_ms": {
-            "type": "integer",
-            "maximum": 86400000.0,
-            "exclusiveMinimum": 0.0,
-            "title": "Amount Ms"
-          },
-          "idempotency_key": {
-            "type": "string",
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Idempotency Key"
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
-            "title": "Reason"
-          }
-        },
-        "type": "object",
-        "required": [
-          "tier",
-          "amount_ms",
-          "idempotency_key",
-          "reason"
-        ],
-        "title": "TestGrantCreate"
       },
       "ValidationError": {
         "properties": {

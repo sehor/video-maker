@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.errors import ApiError
 from app.models import AppUser
 
@@ -78,6 +79,15 @@ def get_current_user(
 
 
 CurrentUser = Annotated[AppUser, Depends(get_current_user)]
+
+
+def get_current_user_id(identity: Annotated[Identity, Depends(get_identity)]) -> uuid.UUID:
+    """Authenticate file transfers without holding a request-long DB connection."""
+    with SessionLocal() as db:
+        return get_current_user(identity, db).id
+
+
+CurrentUserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 
 
 def get_admin_user(user: CurrentUser) -> AppUser:

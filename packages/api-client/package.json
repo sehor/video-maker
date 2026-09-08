@@ -11,8 +11,8 @@
     }
   },
   "scripts": {
-    "generate": "openapi-typescript openapi.json -o src/schema.d.ts",
-    "check": "openapi-typescript openapi.json -o src/schema.d.ts --check"
+    "generate": "openapi-typescript openapi.json -o src/schema.d.ts && openapi-typescript openapi-development.json -o src/development-schema.d.ts",
+    "check": "openapi-typescript openapi.json -o src/schema.d.ts --check && openapi-typescript openapi-development.json -o src/development-schema.d.ts --check"
   },
   "devDependencies": {
     "openapi-typescript": "^7.9.1",

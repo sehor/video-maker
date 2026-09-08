@@ -66,7 +66,7 @@ jobs:
         run: pnpm test
       - name: Static checks and generated API client
         run: |
-          uv run --project apps/api --no-sync ruff check apps/api/app apps/api/tests scripts/test.py scripts/test_support.py scripts/dev.py conftest.py tests
+          uv run --project apps/api --no-sync ruff check apps/api/app apps/api/tests apps/api/alembic apps/api/scripts/export_openapi.py scripts/test.py scripts/test_support.py scripts/dev.py scripts/benchmark_storage.py conftest.py tests
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           pnpm lint
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

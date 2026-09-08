@@ -231,26 +231,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/wallet/test-grants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Test Grant
-         * @description Development-only test credit grant; production returns 404.
-         */
-        post: operations["create_test_grant_v1_wallet_test_grants_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/wallet": {
         parameters: {
             query?: never;
@@ -931,17 +911,6 @@ export interface components {
              */
             aspect_ratio?: "16:9" | "9:16";
         };
-        /** TestGrantCreate */
-        TestGrantCreate: {
-            /** Tier */
-            tier: string;
-            /** Amount Ms */
-            amount_ms: number;
-            /** Idempotency Key */
-            idempotency_key: string;
-            /** Reason */
-            reason: string;
-        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1578,41 +1547,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuoteOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_test_grant_v1_wallet_test_grants_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TestGrantCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LedgerTransactionOut"];
                 };
             };
             /** @description Validation Error */

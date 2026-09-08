@@ -32,6 +32,7 @@ def create_generation_quote(
     response_model=LedgerTransactionOut,
     status_code=201,
     description="Development-only test credit grant; production returns 404.",
+    include_in_schema=False,
 )
 def create_test_grant(
     payload: TestGrantCreate, user: CurrentUser, db: Db, idempotency_key: IdempotencyKey = None

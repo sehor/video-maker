@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createApiClient } from '../app/utils/api-client'
-import { ApiRequestError } from '../app/utils/api-error'
+import { ApiRequestError, isTemporaryError } from '../app/utils/api-error'
 
 describe('generated API contract transport', () => {
+  it('keeps interrupted read responses retryable and accepts empty error envelopes', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response('{'))
+      .mockResolvedValueOnce(Response.json(null, { status: 503 }))
+    const api = createApiClient('', async () => 'token', fetcher)
+    const error = await api.request('/v1/wallet').catch(error => error)
+    expect(error.code).toBe('RESPONSE_INVALID')
+    expect(error.resultUnknown).toBe(false)
+    expect(isTemporaryError(error)).toBe(true)
+    await expect(api.request('/v1/wallet')).rejects.toMatchObject({ status: 503 })
+  })
   it('encodes parameters and query, serializes JSON, and preserves the operation key', async () => {
     const fetcher = vi.fn().mockImplementation(async () => Response.json({ id: 'project' }))
     const api = createApiClient('https://api.example', async () => 'token', fetcher)

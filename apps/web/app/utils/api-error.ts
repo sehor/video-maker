@@ -7,5 +7,6 @@ export class ApiRequestError extends Error {
 
 export const isTemporaryError = (error: unknown) => !(error instanceof ApiRequestError)
   || error.resultUnknown || error.status === 0
+  || error.code === 'RESPONSE_INVALID'
   || error.status >= 500 || [408, 429].includes(error.status)
   || error.code === 'IDEMPOTENCY_IN_PROGRESS'

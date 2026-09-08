@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import Response
 
 from app import application_assets as use_cases
-from app.auth import CurrentUser
+from app.auth import CurrentUser, CurrentUserId
 from app.blocking_io import run_blocking
 from app.bootstrap import storage, storage_claim_ttl
 from app.db import SessionLocal
@@ -33,13 +33,13 @@ def list_project_assets(
 async def upload_asset(
     project_id: Annotated[uuid.UUID, Form()],
     file: Annotated[UploadFile, File()],
-    user: CurrentUser,
+    user: CurrentUserId,
 ) -> ProjectAssetOut:
     return await run_blocking(
         use_cases.save_asset,
         project_id,
         file.file,
-        user.id,
+        user,
         file.filename,
         file.content_type or "application/octet-stream",
         session_factory=SessionLocal,
@@ -50,13 +50,13 @@ async def upload_asset(
 
 @router.post("/projects/{project_id}/assets", response_model=ProjectAssetOut, status_code=201)
 async def upload_project_asset(
-    project_id: uuid.UUID, file: Annotated[UploadFile, File()], user: CurrentUser, db: Db
+    project_id: uuid.UUID, file: Annotated[UploadFile, File()], user: CurrentUserId
 ) -> ProjectAssetOut:
     return await run_blocking(
         use_cases.save_asset,
         project_id,
         file.file,
-        user.id,
+        user,
         file.filename,
         file.content_type or "application/octet-stream",
         session_factory=SessionLocal,
@@ -66,12 +66,12 @@ async def upload_project_asset(
 
 
 @router.get("/assets/{asset_id}/content")
-def download_asset(asset_id: uuid.UUID, user: CurrentUser, db: Db) -> Response:
-    item = use_cases.download_asset(asset_id, user, db)
-    return storage_response(storage(), item.object_key, item.media_type)
+def download_asset(asset_id: uuid.UUID, user: CurrentUserId) -> Response:
+    key, media_type = use_cases.download_asset(asset_id, user, SessionLocal)
+    return storage_response(storage(), key, media_type)
 
 
 @router.get("/outputs/{output_id}/content")
-def download_output(output_id: uuid.UUID, user: CurrentUser, db: Db) -> Response:
-    item = use_cases.download_output(output_id, user, db)
-    return storage_response(storage(), item.object_key, item.media_type)
+def download_output(output_id: uuid.UUID, user: CurrentUserId) -> Response:
+    key, media_type = use_cases.download_output(output_id, user, SessionLocal)
+    return storage_response(storage(), key, media_type)
